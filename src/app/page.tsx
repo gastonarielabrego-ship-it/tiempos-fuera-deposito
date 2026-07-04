@@ -1,758 +1,491 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from '@/components/ui/dialog';
 import {
   Upload, RefreshCw, Clock, Users, UtensilsCrossed, ScanFace,
-  FileSpreadsheet, ChevronDown, ChevronUp, AlertTriangle, Search,
-  Trophy, Medal, UserCircle, ArrowUpFromLine, ArrowDownToLine,
-  TrendingUp, CalendarDays, Eye,
+  FileSpreadsheet, Search, Sun, Sunset, Moon, ChevronRight,
+  ArrowUpFromLine, ArrowDownToLine, LogOut, LogIn, Eye, X,
 } from 'lucide-react';
-import WorkerProfileDialog from '@/components/worker-profile-dialog';
 
-/* ────────────── Types ────────────── */
+/* ────── Types ────── */
 
-interface TimeOutPair {
-  salida: string; entrada: string; duracionSegundos: number; duracion: string;
-}
+interface TimeOutPair { salida: string; entrada: string; duracionSegundos: number; duracion: string; }
 interface AccesoEvento { hora: string; terminal: string; }
+
 interface EmployeeDay {
   codigoEmp: number; nombre: string; fecha: string; jornada: string; sector: string; empresa: string;
-  tiemposFuera: TimeOutPair[]; totalFueraSegundos: number; totalFuera: string;
+  turno: string; tiemposFuera: TimeOutPair[]; totalFueraSegundos: number; totalFuera: string;
   comidasHoras: string[]; facialRegistros: { hora: string; zona: string }[];
   accesosEventos: AccesoEvento[];
 }
+
 interface RankingEntry {
   codigoEmp: number; nombre: string; empresa: string; sector: string;
   totalFueraSegundos: number; totalFuera: string;
   diasCount: number; avgPorDia: string; maxDiaFuera: string; maxDiaFecha: string;
 }
+
+interface TurnoRanking { turno: string; label: string; empleados: RankingEntry[]; }
+
 interface Summary {
   totalEmployees: number; totalRecords: number; totalComidas: number;
   totalFacial: number; avgOutsidePerEmployee: string; dates: string[];
 }
+
 interface DashboardData {
-  employees: EmployeeDay[]; ranking: RankingEntry[]; turnos: string[]; summary: Summary;
+  employees: EmployeeDay[]; ranking: RankingEntry[];
+  rankingPorTurno: TurnoRanking[]; turnos: string[]; summary: Summary;
 }
 
-/* ────────────── Helpers ────────────── */
+/* ────── Helpers ────── */
 
-const getDurationColor = (seconds: number) => {
-  if (seconds <= 1800) return 'text-green-600 bg-green-50';
-  if (seconds <= 3600) return 'text-amber-600 bg-amber-50';
-  return 'text-red-600 bg-red-50';
+const timeToS = (t: string) => {
+  if (!t) return 0;
+  const p = t.split(':');
+  return (Number(p[0]) || 0) * 3600 + (Number(p[1]) || 0) * 60 + (Number(p[2]) || 0);
 };
 
-const medalColors = ['text-amber-500', 'text-gray-400', 'text-amber-700'];
+const durColor = (s: number) => s <= 1800 ? 'text-emerald-600' : s <= 3600 ? 'text-amber-600' : 'text-red-600';
+const durBg = (s: number) => s <= 1800 ? 'bg-emerald-50' : s <= 3600 ? 'bg-amber-50' : 'bg-red-50';
 
-/* ────────────── Component ────────────── */
+const turnoConfig: Record<string, { icon: typeof Sun; color: string; bg: string; border: string; badge: string }> = {
+  TM: { icon: Sun, color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200', badge: 'bg-amber-500' },
+  TT: { icon: Sunset, color: 'text-orange-600', bg: 'bg-orange-50', border: 'border-orange-200', badge: 'bg-orange-500' },
+  TN: { icon: Moon, color: 'text-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-200', badge: 'bg-indigo-500' },
+  OTRO: { icon: Clock, color: 'text-gray-500', bg: 'bg-gray-50', border: 'border-gray-200', badge: 'bg-gray-400' },
+};
+
+/* ────── Main ────── */
 
 export default function Home() {
-  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState<string | null>(null);
-  const [expandedRow, setExpandedRow] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedDate, setSelectedDate] = useState<string>('all');
-  const [selectedTurno, setSelectedTurno] = useState<string>('all');
-  const [viewMode, setViewMode] = useState<'tabla' | 'ranking'>('tabla');
-  const [profileCodigoEmp, setProfileCodigoEmp] = useState<number | null>(null);
+  const [search, setSearch] = useState('');
+  const [selectedDate, setSelectedDate] = useState('all');
+  const [showUpload, setShowUpload] = useState(false);
+  const [profileEmp, setProfileEmp] = useState<EmployeeDay | null>(null);
+  const [profileDateIdx, setProfileDateIdx] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const fileInputAccesos = useRef<HTMLInputElement>(null);
-  const fileInputComidas = useRef<HTMLInputElement>(null);
-  const fileInputFacial = useRef<HTMLInputElement>(null);
-
-  const fetchDashboard = useCallback(async () => {
+  const fetch = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/dashboard');
-      if (res.ok) {
-        const data = await res.json();
-        setDashboard(data);
-      }
-    } catch (err) {
-      console.error('Error fetching dashboard:', err);
-    } finally {
-      setLoading(false);
-    }
+      const r = await fetch('/api/dashboard');
+      if (r.ok) setData(await r.json());
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
   }, []);
+  useEffect(() => { fetch(); }, [fetch]);
 
-  useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
-
-  const uploadFile = async (endpoint: string, file: File, label: string) => {
-    setUploading(label);
-    const formData = new FormData();
-    formData.append('file', file);
-    try {
-      const res = await fetch(endpoint, { method: 'POST', body: formData });
-      if (res.ok) await fetchDashboard();
-    } catch (err) {
-      console.error(`Error uploading ${label}:`, err);
-    } finally {
-      setUploading(null);
-    }
+  const upload = async (ep: string, file: File) => {
+    setUploading(ep);
+    const fd = new FormData(); fd.append('file', file);
+    try { const r = await fetch(ep, { method: 'POST', body: fd }); if (r.ok) fetch(); }
+    catch (e) { console.error(e); }
+    finally { setUploading(null); }
   };
 
-  const handleFileChange = (endpoint: string, label: string) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) { uploadFile(endpoint, file, label); e.target.value = ''; }
-  };
-
-  /* ── Filtering ── */
-  const filteredEmployees = useMemo(() => {
-    return (dashboard?.employees || []).filter((emp) => {
-      const matchesSearch =
-        !searchTerm ||
-        emp.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        String(emp.codigoEmp).includes(searchTerm);
-      const matchesDate = selectedDate === 'all' || emp.fecha === selectedDate;
-      const matchesTurno = selectedTurno === 'all' || emp.jornada === selectedTurno;
-      return matchesSearch && matchesDate && matchesTurno;
-    });
-  }, [dashboard, searchTerm, selectedDate, selectedTurno]);
-
+  // Filtered ranking por turno
   const filteredRanking = useMemo(() => {
-    if (!dashboard?.ranking) return [];
-    const filteredCodes = new Set(filteredEmployees.map(e => e.codigoEmp));
-    return dashboard.ranking.filter(r => filteredCodes.has(r.codigoEmp));
-  }, [dashboard, filteredEmployees]);
+    if (!data) return [];
+    return data.rankingPorTurno.map(tr => ({
+      ...tr,
+      empleados: tr.empleados.filter(e =>
+        (!search || e.nombre.toLowerCase().includes(search.toLowerCase()) || String(e.codigoEmp).includes(search)) &&
+        (selectedDate === 'all' || true) // ranking is aggregated across all dates
+      ),
+    })).filter(tr => tr.empleados.length > 0);
+  }, [data, search, selectedDate]);
 
-  /* ── Employee name map for profile dialog ── */
-  const allEmployeeNames = useMemo(() => {
-    const map = new Map<number, string>();
-    for (const emp of dashboard?.employees || []) {
-      if (!map.has(emp.codigoEmp)) map.set(emp.codigoEmp, emp.nombre);
-    }
-    return map;
-  }, [dashboard]);
+  // Employee days for profile dialog
+  const empDays = useMemo(() => {
+    if (!profileEmp || !data) return [];
+    return data.employees.filter(e => e.codigoEmp === profileEmp.codigoEmp).sort((a, b) => b.fecha.localeCompare(a.fecha));
+  }, [profileEmp, data]);
 
-  /* ── Grouped by date for tabla view ── */
-  const groupedByDate = useMemo(() => {
-    return filteredEmployees.reduce<Record<string, EmployeeDay[]>>((acc, emp) => {
-      if (!acc[emp.fecha]) acc[emp.fecha] = [];
-      acc[emp.fecha].push(emp);
-      return acc;
-    }, {});
-  }, [filteredEmployees]);
+  const profileDay = empDays[profileDateIdx] || null;
 
-  const handleOpenProfile = (codigoEmp: number) => {
-    setProfileCodigoEmp(codigoEmp);
+  const openProfile = (codigoEmp: number) => {
+    if (!data) return;
+    const emp = data.employees.find(e => e.codigoEmp === codigoEmp);
+    if (emp) { setProfileEmp(emp); setProfileDateIdx(0); }
   };
 
-  /* ══════════════════════════════════════════════════════
-     RENDER
-     ══════════════════════════════════════════════════════ */
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50">
-      {/* ── Header ── */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
-        <div className="max-w-[1600px] mx-auto px-4 py-4">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="bg-emerald-600 p-2 rounded-lg">
-                <Clock className="h-6 w-6 text-white" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-gray-900">Tiempos Fuera de Deposito</h1>
-                <p className="text-sm text-gray-500">Control de accesos en tiempo real</p>
-              </div>
+    <div className="min-h-screen bg-[#f5f5f0] flex flex-col">
+      {/* ── Top bar ── */}
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center">
+              <Clock className="h-4 w-4 text-white" />
             </div>
-            <div className="flex items-center gap-2">
-              <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as 'tabla' | 'ranking')}>
-                <TabsList className="h-9">
-                  <TabsTrigger value="tabla" className="text-xs px-3">
-                    <FileSpreadsheet className="h-3.5 w-3.5 mr-1.5" /> Tabla
-                  </TabsTrigger>
-                  <TabsTrigger value="ranking" className="text-xs px-3">
-                    <Trophy className="h-3.5 w-3.5 mr-1.5" /> Ranking
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-              <Button onClick={fetchDashboard} disabled={loading} variant="outline" size="sm">
-                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              </Button>
+            <div>
+              <h1 className="text-sm font-bold text-gray-900 leading-tight">Tiempos Fuera de Deposito</h1>
+              <p className="text-[10px] text-gray-400">Control de accesos</p>
             </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" className="text-xs text-gray-500" onClick={() => setShowUpload(!showUpload)}>
+              <Upload className="h-3.5 w-3.5 mr-1" /> Cargar
+            </Button>
+            <Button variant="ghost" size="sm" className="text-xs text-gray-500" onClick={fetch} disabled={loading}>
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+            </Button>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 py-6 space-y-6">
-        {/* ── Upload Section ── */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <Upload className="h-4 w-4" /> Carga de Archivos
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {/* Accesos upload */}
-              <div
-                className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-emerald-400 hover:bg-emerald-50/50 transition-colors cursor-pointer"
-                onClick={() => fileInputAccesos.current?.click()}
-              >
-                <FileSpreadsheet className="h-8 w-8 mx-auto text-emerald-600 mb-2" />
-                <p className="text-sm font-medium text-gray-700">Accesos</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  {uploading === 'accesos' ? 'Procesando...' : 'Click para subir .xlsx'}
-                </p>
-                <input ref={fileInputAccesos} type="file" accept=".xlsx,.xls" className="hidden"
-                  onChange={handleFileChange('/api/upload-accesos', 'accesos')} />
+      <main className="flex-1 max-w-5xl w-full mx-auto px-4 py-5 space-y-4">
+        {/* ── Upload panel (collapsible) ── */}
+        {showUpload && (
+          <Card>
+            <CardContent className="p-4">
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  { label: 'Accesos', ep: '/api/upload-accesos', icon: FileSpreadsheet, color: 'text-emerald-600 hover:border-emerald-300' },
+                  { label: 'Comidas', ep: '/api/upload-comidas', icon: UtensilsCrossed, color: 'text-orange-500 hover:border-orange-300' },
+                  { label: 'Facial', ep: '/api/upload-facial', icon: ScanFace, color: 'text-blue-500 hover:border-blue-300' },
+                ].map(({ label, ep, icon: Icon, color }) => (
+                  <label
+                    key={ep}
+                    className={`border-2 border-dashed border-gray-200 rounded-lg p-4 text-center cursor-pointer transition-colors ${color} ${uploading === ep ? 'opacity-50 pointer-events-none' : ''}`}
+                  >
+                    <input type="file" accept=".xlsx,.xls" className="hidden"
+                      onChange={e => { const f = e.target.files?.[0]; if (f) { upload(ep, f); e.target.value = ''; } }} />
+                    <Icon className="h-6 w-6 mx-auto mb-1.5" />
+                    <p className="text-xs font-medium text-gray-700">{label}</p>
+                    <p className="text-[10px] text-gray-400 mt-0.5">
+                      {uploading === ep ? 'Procesando...' : '.xlsx'}
+                    </p>
+                  </label>
+                ))}
               </div>
-              {/* Comidas upload */}
-              <div
-                className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-orange-400 hover:bg-orange-50/50 transition-colors cursor-pointer"
-                onClick={() => fileInputComidas.current?.click()}
-              >
-                <UtensilsCrossed className="h-8 w-8 mx-auto text-orange-500 mb-2" />
-                <p className="text-sm font-medium text-gray-700">Comidas (TK)</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  {uploading === 'comidas' ? 'Procesando...' : 'Click para subir .xlsx'}
-                </p>
-                <input ref={fileInputComidas} type="file" accept=".xlsx,.xls" className="hidden"
-                  onChange={handleFileChange('/api/upload-comidas', 'comidas')} />
-              </div>
-              {/* Facial upload */}
-              <div
-                className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-blue-400 hover:bg-blue-50/50 transition-colors cursor-pointer"
-                onClick={() => fileInputFacial.current?.click()}
-              >
-                <ScanFace className="h-8 w-8 mx-auto text-blue-500 mb-2" />
-                <p className="text-sm font-medium text-gray-700">Facial</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  {uploading === 'facial' ? 'Procesando...' : 'Click para subir .xlsx'}
-                </p>
-                <input ref={fileInputFacial} type="file" accept=".xlsx,.xls" className="hidden"
-                  onChange={handleFileChange('/api/upload-facial', 'facial')} />
-              </div>
-            </div>
-            <p className="text-xs text-gray-400 mt-3 text-center">
-              Los datos se sobreescriben con cada carga (no se acumulan)
-            </p>
-          </CardContent>
-        </Card>
+              <p className="text-[10px] text-gray-400 mt-2 text-center">Los datos se sobreescriben con cada carga</p>
+            </CardContent>
+          </Card>
+        )}
 
-        {/* ── Summary Cards ── */}
-        {dashboard && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <Card className="bg-white">
-              <CardContent className="p-4 flex items-center gap-3">
-                <div className="bg-emerald-100 p-2 rounded-lg"><Users className="h-5 w-5 text-emerald-600" /></div>
-                <div>
-                  <p className="text-xs text-gray-500">Empleados</p>
-                  <p className="text-lg font-bold text-gray-900">{dashboard.summary.totalEmployees}</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="bg-white">
-              <CardContent className="p-4 flex items-center gap-3">
-                <div className="bg-emerald-100 p-2 rounded-lg"><FileSpreadsheet className="h-5 w-5 text-emerald-600" /></div>
-                <div>
-                  <p className="text-xs text-gray-500">Reg. Accesos</p>
-                  <p className="text-lg font-bold text-gray-900">{dashboard.summary.totalRecords}</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="bg-white">
-              <CardContent className="p-4 flex items-center gap-3">
-                <div className="bg-orange-100 p-2 rounded-lg"><UtensilsCrossed className="h-5 w-5 text-orange-500" /></div>
-                <div>
-                  <p className="text-xs text-gray-500">Reg. Comidas</p>
-                  <p className="text-lg font-bold text-gray-900">{dashboard.summary.totalComidas}</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="bg-white">
-              <CardContent className="p-4 flex items-center gap-3">
-                <div className="bg-blue-100 p-2 rounded-lg"><ScanFace className="h-5 w-5 text-blue-500" /></div>
-                <div>
-                  <p className="text-xs text-gray-500">Reg. Facial</p>
-                  <p className="text-lg font-bold text-gray-900">{dashboard.summary.totalFacial}</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="bg-white col-span-2 sm:col-span-1">
-              <CardContent className="p-4 flex items-center gap-3">
-                <div className="bg-amber-100 p-2 rounded-lg"><Clock className="h-5 w-5 text-amber-600" /></div>
-                <div>
-                  <p className="text-xs text-gray-500">Prom. Fuera</p>
-                  <p className="text-lg font-bold text-gray-900">{dashboard.summary.avgOutsidePerEmployee}</p>
-                </div>
-              </CardContent>
-            </Card>
+        {/* ── Summary chips ── */}
+        {data && !loading && (
+          <div className="flex items-center gap-3 flex-wrap">
+            <Chip icon={<Users className="h-3.5 w-3.5" />} label="Empleados" value={String(data.summary.totalEmployees)} />
+            <Chip icon={<Clock className="h-3.5 w-3.5" />} label="Prom. Fuera" value={data.summary.avgOutsidePerEmployee} />
+            <div className="flex-1" />
+            {data.summary.dates.map(d => (
+              <button key={d} onClick={() => setSelectedDate(selectedDate === d ? 'all' : d)}
+                className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors ${selectedDate === d ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-50'}`}>
+                {d}
+              </button>
+            ))}
           </div>
         )}
 
-        {/* ── Filters ── */}
-        {dashboard && dashboard.summary.dates.length > 0 && (
-          <div className="space-y-3">
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <Input
-                  placeholder="Buscar por nombre o codigo..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-9"
-                />
+        {/* ── Search ── */}
+        {data && !loading && (
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-300" />
+            <Input placeholder="Buscar empleado..." value={search} onChange={e => setSearch(e.target.value)}
+              className="pl-9 h-9 text-sm bg-white border-gray-200" />
+          </div>
+        )}
+
+        {/* ── Loading ── */}
+        {loading && (
+          <div className="space-y-4">
+            {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-48 w-full rounded-xl" />)}
+          </div>
+        )}
+
+        {/* ── Empty ── */}
+        {!loading && data && data.rankingPorTurno.length === 0 && (
+          <div className="text-center py-20">
+            <FileSpreadsheet className="h-10 w-10 mx-auto text-gray-300 mb-3" />
+            <p className="text-sm text-gray-400">Subi los archivos Excel para comenzar</p>
+          </div>
+        )}
+
+        {/* ═══════════════════════════════════════════
+            RANKING POR TURNO
+            ═══════════════════════════════════════════ */}
+        {!loading && filteredRanking.map(tr => {
+          const cfg = turnoConfig[tr.turno] || turnoConfig.OTRO;
+          const TurnoIcon = cfg.icon;
+          const top = tr.empleados.slice(0, 3);
+          const rest = tr.empleados.slice(3);
+
+          return (
+            <div key={tr.turno} className="space-y-3">
+              {/* Turno header */}
+              <div className="flex items-center gap-2 px-1">
+                <div className={`w-7 h-7 rounded-lg ${cfg.bg} flex items-center justify-center`}>
+                  <TurnoIcon className={`h-3.5 w-3.5 ${cfg.color}`} />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-gray-900">{tr.turno}</h2>
+                  <p className="text-[10px] text-gray-400">{tr.label} &middot; {tr.empleados.length} empleados</p>
+                </div>
               </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {/* Turno filters */}
-              {dashboard.turnos.length > 0 && (
-                <div className="flex items-center gap-2 mr-4">
-                  <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">Turno:</span>
-                  <Badge
-                    variant={selectedTurno === 'all' ? 'default' : 'outline'}
-                    className="cursor-pointer select-none"
-                    onClick={() => setSelectedTurno('all')}
-                  >
-                    Todos
-                  </Badge>
-                  {dashboard.turnos.map((t) => (
-                    <Badge
-                      key={t}
-                      variant={selectedTurno === t ? 'default' : 'outline'}
-                      className="cursor-pointer select-none"
-                      onClick={() => setSelectedTurno(t)}
+
+              {/* Top 3 cards */}
+              {top.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {top.map((emp, idx) => (
+                    <button
+                      key={emp.codigoEmp}
+                      onClick={() => openProfile(emp.codigoEmp)}
+                      className={`rounded-xl border p-4 text-left transition-all hover:shadow-md hover:-translate-y-0.5 ${idx === 0
+                        ? 'bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-200'
+                        : idx === 1
+                          ? 'bg-gradient-to-br from-gray-50 to-gray-100/50 border-gray-200'
+                          : 'bg-gradient-to-br from-orange-50 to-orange-100/50 border-orange-200'
+                      }`}
                     >
-                      {t}
-                    </Badge>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-2xl">{idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'}</span>
+                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full text-white ${cfg.badge}`}>
+                          #{idx + 1}
+                        </span>
+                      </div>
+                      <p className="text-xs font-bold text-gray-900 truncate">{emp.nombre}</p>
+                      <p className={`text-lg font-black font-mono mt-1 ${durColor(emp.totalFueraSegundos)}`}>
+                        {emp.totalFuera}
+                      </p>
+                      <p className="text-[10px] text-gray-400 mt-1">{emp.diasCount} dia{emp.diasCount !== 1 ? 's' : ''} &middot; Prom: {emp.avgPorDia}</p>
+                    </button>
                   ))}
                 </div>
               )}
-              {/* Date filters */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">Fecha:</span>
-                <Badge
-                  variant={selectedDate === 'all' ? 'default' : 'outline'}
-                  className="cursor-pointer select-none"
-                  onClick={() => setSelectedDate('all')}
-                >
-                  Todas
-                </Badge>
-                {dashboard.summary.dates.map((d) => (
-                  <Badge
-                    key={d}
-                    variant={selectedDate === d ? 'default' : 'outline'}
-                    className="cursor-pointer select-none"
-                    onClick={() => setSelectedDate(d)}
-                  >
-                    {d}
-                  </Badge>
+
+              {/* Rest of ranking */}
+              {rest.length > 0 && (
+                <Card className="overflow-hidden">
+                  <div className="divide-y divide-gray-100">
+                    {rest.map((emp, idx) => (
+                      <button
+                        key={emp.codigoEmp}
+                        onClick={() => openProfile(emp.codigoEmp)}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50/80 transition-colors"
+                      >
+                        <span className="text-xs font-bold text-gray-300 w-6 text-right">{idx + 4}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{emp.nombre}</p>
+                          <p className="text-[10px] text-gray-400">{emp.diasCount} dias &middot; Prom: {emp.avgPorDia}</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className={`text-sm font-bold font-mono ${durColor(emp.totalFueraSegundos)}`}>{emp.totalFuera}</p>
+                        </div>
+                        <ChevronRight className="h-3.5 w-3.5 text-gray-300 shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                </Card>
+              )}
+            </div>
+          );
+        })}
+      </main>
+
+      {/* ═══════════════════════════════════════════
+          PROFILE DIALOG
+          ═══════════════════════════════════════════ */}
+      <Dialog open={profileEmp !== null} onOpenChange={o => { if (!o) setProfileEmp(null); }}>
+        <DialogContent className="sm:max-w-3xl max-h-[88vh] p-0 overflow-hidden flex flex-col">
+          {/* Header */}
+          {profileEmp && (
+            <div className="bg-gray-900 text-white px-5 py-4 shrink-0">
+              <div className="flex items-start justify-between">
+                <div>
+                  <DialogTitle className="text-white text-base">{profileEmp.nombre}</DialogTitle>
+                  <DialogDescription className="text-gray-400 text-xs mt-0.5">
+                    {profileEmp.empresa} &middot; {profileEmp.sector} &middot; Codigo {profileEmp.codigoEmp}
+                  </DialogDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${turnoConfig[profileEmp.turno]?.badge || 'bg-gray-400'} text-white`}>
+                    {profileEmp.turno}
+                  </span>
+                </div>
+              </div>
+              {/* Date tabs */}
+              <div className="flex gap-1.5 mt-3 overflow-x-auto">
+                {empDays.map((d, i) => (
+                  <button key={d.fecha} onClick={() => setProfileDateIdx(i)}
+                    className={`px-2.5 py-1 rounded text-[11px] font-medium whitespace-nowrap transition-colors ${profileDateIdx === i
+                      ? 'bg-white text-gray-900'
+                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                    }`}>
+                    {d.fecha} {d.totalFueraSegundos > 0 ? `(${d.totalFuera})` : ''}
+                  </button>
                 ))}
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* ══════════════════════════════════════════
-            RANKING VIEW
-            ══════════════════════════════════════════ */}
-        {viewMode === 'ranking' && (
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base font-semibold flex items-center gap-2">
-                <Trophy className="h-4 w-4 text-amber-500" />
-                Ranking — Mayor Tiempo Fuera de Deposito
-                {selectedDate !== 'all' && (
-                  <Badge variant="outline" className="text-xs ml-2">{selectedDate}</Badge>
-                )}
-                {selectedTurno !== 'all' && (
-                  <Badge variant="outline" className="text-xs">{selectedTurno}</Badge>
-                )}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              {loading ? (
-                <div className="p-6 space-y-3">
-                  {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
-                </div>
-              ) : filteredRanking.length === 0 ? (
-                <div className="p-12 text-center">
-                  <Trophy className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                  <h3 className="text-lg font-medium text-gray-600">Sin datos para el filtro seleccionado</h3>
-                </div>
-              ) : (
-                <>
-                  {/* Podium for top 3 */}
-                  {filteredRanking.length >= 3 && (
-                    <div className="px-6 pt-6 pb-2">
-                      <div className="flex items-end justify-center gap-4">
-                        {/* 2nd place */}
-                        <PodiumCard rank={2} entry={filteredRanking[1]} onOpen={handleOpenProfile} />
-                        {/* 1st place */}
-                        <PodiumCard rank={1} entry={filteredRanking[0]} onOpen={handleOpenProfile} />
-                        {/* 3rd place */}
-                        <PodiumCard rank={3} entry={filteredRanking[2]} onOpen={handleOpenProfile} />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Full ranking table */}
-                  <ScrollArea className="max-h-[50vh]">
-                    <Table>
-                      <TableHeader>
-                        <TableRow className="bg-gray-50">
-                          <TableHead className="w-12 text-xs font-semibold text-gray-600">#</TableHead>
-                          <TableHead className="text-xs font-semibold text-gray-600">Codigo</TableHead>
-                          <TableHead className="text-xs font-semibold text-gray-600">Empleado</TableHead>
-                          <TableHead className="text-xs font-semibold text-gray-600 hidden sm:table-cell">Empresa</TableHead>
-                          <TableHead className="text-xs font-semibold text-gray-600 text-right">Total Fuera</TableHead>
-                          <TableHead className="text-xs font-semibold text-gray-600 text-center hidden md:table-cell">Dias</TableHead>
-                          <TableHead className="text-xs font-semibold text-gray-600 text-right hidden md:table-cell">Prom/Dia</TableHead>
-                          <TableHead className="text-xs font-semibold text-gray-600 text-right hidden lg:table-cell">Max Dia</TableHead>
-                          <TableHead className="w-10"></TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {filteredRanking.map((r, idx) => (
-                          <TableRow
-                            key={r.codigoEmp}
-                            className={`hover:bg-gray-50 cursor-pointer transition-colors ${idx < 3 ? 'bg-amber-50/30' : ''}`}
-                            onClick={() => handleOpenProfile(r.codigoEmp)}
-                          >
-                            <TableCell className="text-center">
-                              {idx < 3 ? (
-                                <Medal className={`h-5 w-5 mx-auto ${medalColors[idx]}`} />
-                              ) : (
-                                <span className="text-sm font-bold text-gray-400">{idx + 1}</span>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-sm font-mono text-gray-500">{r.codigoEmp}</TableCell>
-                            <TableCell className="text-sm font-medium text-gray-900 max-w-[200px] truncate">{r.nombre}</TableCell>
-                            <TableCell className="text-sm text-gray-500 hidden sm:table-cell max-w-[140px] truncate">{r.empresa}</TableCell>
-                            <TableCell className="text-right">
-                              <Badge variant="secondary" className={`font-mono font-bold ${getDurationColor(r.totalFueraSegundos)}`}>
-                                {r.totalFuera}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-center hidden md:table-cell">
-                              <span className="text-sm text-gray-600">{r.diasCount}</span>
-                            </TableCell>
-                            <TableCell className="text-right hidden md:table-cell">
-                              <span className="text-sm font-mono text-gray-600">{r.avgPorDia}</span>
-                            </TableCell>
-                            <TableCell className="text-right hidden lg:table-cell">
-                              <div className="text-xs">
-                                <span className="font-mono text-gray-600">{r.maxDiaFuera}</span>
-                                <span className="text-gray-400 ml-1">({r.maxDiaFecha})</span>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <Eye className="h-4 w-4 text-gray-400" />
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </ScrollArea>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ══════════════════════════════════════════
-            TABLA VIEW
-            ══════════════════════════════════════════ */}
-        {viewMode === 'tabla' && (
-          <Card>
-            <CardContent className="p-0">
-              {loading ? (
-                <div className="p-6 space-y-4">
-                  {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
-                </div>
-              ) : !dashboard || filteredEmployees.length === 0 ? (
-                <div className="p-12 text-center">
-                  <FileSpreadsheet className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                  <h3 className="text-lg font-medium text-gray-600">Sin datos</h3>
-                  <p className="text-sm text-gray-400 mt-1">
-                    Subi los archivos Excel para visualizar los tiempos fuera de deposito
-                  </p>
-                </div>
-              ) : (
-                <ScrollArea className="max-h-[70vh]">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-gray-50">
-                        <TableHead className="w-8"></TableHead>
-                        <TableHead className="text-xs font-semibold text-gray-600">Codigo</TableHead>
-                        <TableHead className="text-xs font-semibold text-gray-600">Empleado</TableHead>
-                        <TableHead className="text-xs font-semibold text-gray-600">Fecha</TableHead>
-                        <TableHead className="text-xs font-semibold text-gray-600 hidden sm:table-cell">Turno</TableHead>
-                        <TableHead className="text-xs font-semibold text-gray-600 hidden md:table-cell">Sector</TableHead>
-                        <TableHead className="text-xs font-semibold text-gray-600">T. Fuera Deposito</TableHead>
-                        <TableHead className="text-xs font-semibold text-gray-600 text-center">TK</TableHead>
-                        <TableHead className="text-xs font-semibold text-gray-600 text-center">Facial</TableHead>
-                        <TableHead className="w-10"></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {Object.entries(groupedByDate).map(([fecha, emps]) => (
-                        <DateGroup key={fecha} fecha={fecha}>
-                          {emps.map((emp) => {
-                            const rowKey = `${emp.codigoEmp}-${emp.fecha}`;
-                            const isExpanded = expandedRow === rowKey;
-                            return (
-                              <TableRow
-                                key={rowKey}
-                                className={`hover:bg-gray-50 cursor-pointer transition-colors ${
-                                  emp.tiemposFuera.length === 0 ? 'opacity-50' : ''
-                                }`}
-                                onClick={() => setExpandedRow(isExpanded ? null : rowKey)}
-                              >
-                                <TableCell className="w-8 text-center">
-                                  {isExpanded ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
-                                </TableCell>
-                                <TableCell className="text-sm font-mono text-gray-500">{emp.codigoEmp}</TableCell>
-                                <TableCell className="text-sm font-medium text-gray-900 max-w-[200px] truncate">{emp.nombre}</TableCell>
-                                <TableCell className="text-sm text-gray-500">{emp.fecha}</TableCell>
-                                <TableCell className="text-sm text-gray-500 hidden sm:table-cell max-w-[120px] truncate">
-                                  {emp.jornada ? (
-                                    <Badge variant="outline" className="text-[10px] font-normal">{emp.jornada}</Badge>
-                                  ) : '—'}
-                                </TableCell>
-                                <TableCell className="text-sm text-gray-500 hidden md:table-cell max-w-[120px] truncate">{emp.sector}</TableCell>
-                                <TableCell>
-                                  <div className="space-y-1">
-                                    {emp.tiemposFuera.map((t, idx) => (
-                                      <div key={idx} className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-xs text-gray-500">{t.salida} → {t.entrada}</span>
-                                        <Badge variant="secondary" className={`text-xs font-mono font-semibold ${getDurationColor(t.duracionSegundos)}`}>
-                                          {t.duracion}
-                                        </Badge>
-                                      </div>
-                                    ))}
-                                    {emp.tiemposFuera.length > 1 && !isExpanded && (
-                                      <Badge variant="secondary" className={`text-xs font-mono font-bold ${getDurationColor(emp.totalFueraSegundos)}`}>
-                                        Total: {emp.totalFuera}
-                                      </Badge>
-                                    )}
-                                  </div>
-                                </TableCell>
-                                <TableCell className="text-center">
-                                  {emp.comidasHoras.length > 0 ? (
-                                    <Badge variant="outline" className="text-xs bg-orange-50 text-orange-600 border-orange-200">
-                                      TK {emp.comidasHoras.length}x
-                                    </Badge>
-                                  ) : <span className="text-xs text-gray-300">—</span>}
-                                </TableCell>
-                                <TableCell className="text-center">
-                                  {emp.facialRegistros.length > 0 ? (
-                                    <Badge variant="outline" className="text-xs bg-blue-50 text-blue-600 border-blue-200">
-                                      {emp.facialRegistros.length} reg.
-                                    </Badge>
-                                  ) : <span className="text-xs text-gray-300">—</span>}
-                                </TableCell>
-                                <TableCell>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); handleOpenProfile(emp.codigoEmp); }}
-                                    className="p-1 rounded hover:bg-gray-100 transition-colors"
-                                    title="Ver perfil del trabajador"
-                                  >
-                                    <Eye className="h-4 w-4 text-gray-400 hover:text-emerald-600" />
-                                  </button>
-                                </TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </DateGroup>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </ScrollArea>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ── Expanded Detail Panel (Tabla view) ── */}
-        {expandedRow && dashboard && viewMode === 'tabla' && (() => {
-          const emp = dashboard.employees.find(
-            (e) => `${e.codigoEmp}-${e.fecha}` === expandedRow
-          );
-          if (!emp) return null;
-          return (
-            <Card className="border-l-4 border-l-emerald-500">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">{emp.nombre} — {emp.fecha}</CardTitle>
-                  <Button
-                    variant="outline" size="sm"
-                    onClick={() => handleOpenProfile(emp.codigoEmp)}
-                    className="text-xs"
-                  >
-                    <UserCircle className="h-3.5 w-3.5 mr-1" /> Ver perfil completo
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div>
-                    <p className="text-xs text-gray-500 font-medium mb-1">Jornada</p>
-                    <p className="text-sm text-gray-700">{emp.jornada || '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 font-medium mb-1">Sector</p>
-                    <p className="text-sm text-gray-700">{emp.sector || '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 font-medium mb-1">Empresa</p>
-                    <p className="text-sm text-gray-700">{emp.empresa || '—'}</p>
-                  </div>
-                </div>
-
+          {/* Content */}
+          {profileDay && (
+            <ScrollArea className="flex-1">
+              <div className="p-5 space-y-5">
+                {/* Times outside */}
                 <div>
-                  <p className="text-xs text-gray-500 font-medium mb-2">Detalle Tiempos Fuera de Deposito</p>
-                  {emp.tiemposFuera.length === 0 ? (
-                    <p className="text-sm text-gray-400 italic">Sin salidas registradas</p>
+                  <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Tiempos Fuera de Deposito</h3>
+                  {profileDay.tiemposFuera.length === 0 ? (
+                    <p className="text-sm text-gray-300 italic">Sin salidas registradas</p>
                   ) : (
-                    <div className="space-y-2">
-                      {emp.tiemposFuera.map((t, idx) => (
-                        <div key={idx} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-2">
-                          <div className="flex items-center gap-4">
-                            <ArrowUpFromLine className="h-3.5 w-3.5 text-red-500" />
-                            <span className="text-sm font-mono text-red-600">{t.salida}</span>
-                            <span className="text-gray-300">→</span>
-                            <ArrowDownToLine className="h-3.5 w-3.5 text-emerald-500" />
-                            <span className="text-sm font-mono text-emerald-600">{t.entrada}</span>
+                    <div className="space-y-1.5">
+                      {profileDay.tiemposFuera.map((t, i) => (
+                        <div key={i} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                          <div className="flex items-center gap-2.5">
+                            <ArrowUpFromLine className="h-3 w-3 text-red-400" />
+                            <span className="text-xs font-mono text-red-500">{t.salida}</span>
+                            <span className="text-gray-200 text-xs">→</span>
+                            <ArrowDownToLine className="h-3 w-3 text-emerald-400" />
+                            <span className="text-xs font-mono text-emerald-500">{t.entrada}</span>
                           </div>
-                          <Badge variant="secondary" className={`font-mono font-bold ${getDurationColor(t.duracionSegundos)}`}>
-                            {t.duracion}
-                          </Badge>
+                          <span className={`text-xs font-bold font-mono ${durColor(t.duracionSegundos)}`}>{t.duracion}</span>
                         </div>
                       ))}
-                      {emp.tiemposFuera.length > 1 && (
-                        <div className="flex items-center justify-between bg-emerald-50 rounded-lg px-4 py-2 border border-emerald-200">
-                          <span className="text-sm font-semibold text-emerald-700">Total fuera de deposito</span>
-                          <Badge className="bg-emerald-600 text-white font-mono font-bold">{emp.totalFuera}</Badge>
+                      {profileDay.tiemposFuera.length > 1 && (
+                        <div className="flex items-center justify-between bg-emerald-50 rounded-lg px-3 py-2 border border-emerald-100">
+                          <span className="text-xs font-semibold text-emerald-700">Total</span>
+                          <span className="text-sm font-black font-mono text-emerald-700">{profileDay.totalFuera}</span>
                         </div>
                       )}
                     </div>
                   )}
                 </div>
 
+                {/* Timeline */}
                 <div>
-                  <p className="text-xs text-gray-500 font-medium mb-2">TK Comida</p>
-                  {emp.comidasHoras.length === 0 ? (
-                    <p className="text-sm text-gray-400 italic">Sin registros de comida</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {emp.comidasHoras.map((h, idx) => (
-                        <Badge key={idx} variant="outline" className="bg-orange-50 text-orange-600 border-orange-200">
-                          <UtensilsCrossed className="h-3 w-3 mr-1" /> {h}
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
+                  <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-3">Linea de Tiempo</h3>
+                  <TimelineView day={profileDay} />
                 </div>
 
-                <div>
-                  <p className="text-xs text-gray-500 font-medium mb-2">Registros Faciales</p>
-                  {emp.facialRegistros.length === 0 ? (
-                    <p className="text-sm text-gray-400 italic">Sin registros faciales</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {emp.facialRegistros.map((f, idx) => (
-                        <Badge
-                          key={idx}
-                          variant="outline"
-                          className={`${
-                            f.zona.toLowerCase().includes('entrada')
-                              ? 'bg-blue-50 text-blue-600 border-blue-200'
-                              : 'bg-purple-50 text-purple-600 border-purple-200'
-                          }`}
-                        >
-                          <ScanFace className="h-3 w-3 mr-1" /> {f.hora} — {f.zona}
-                        </Badge>
+                {/* Comidas */}
+                {profileDay.comidasHoras.length > 0 && (
+                  <div>
+                    <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">TK Comida</h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {profileDay.comidasHoras.map((h, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 text-[11px] bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full border border-orange-100">
+                          <UtensilsCrossed className="h-3 w-3" /> {h}
+                        </span>
                       ))}
                     </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })()}
-      </main>
+                  </div>
+                )}
 
-      {/* ── Worker Profile Dialog ── */}
-      <WorkerProfileDialog
-        open={profileCodigoEmp !== null}
-        onOpenChange={(open) => { if (!open) setProfileCodigoEmp(null); }}
-        codigoEmp={profileCodigoEmp || 0}
-        employees={dashboard?.employees || []}
-        allEmployeeNames={allEmployeeNames}
-      />
-
-      {/* ── Footer ── */}
-      <footer className="border-t border-gray-200 bg-white py-3 mt-auto">
-        <p className="text-center text-xs text-gray-400">
-          Dashboard de Tiempos Fuera de Deposito — Datos actualizables por carga de archivos
-        </p>
-      </footer>
+                {/* Facial */}
+                {profileDay.facialRegistros.length > 0 && (
+                  <div>
+                    <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Registros Faciales</h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {profileDay.facialRegistros.map((f, i) => (
+                        <span key={i} className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border ${
+                          f.zona.toLowerCase().includes('entrada')
+                            ? 'bg-blue-50 text-blue-600 border-blue-100'
+                            : 'bg-purple-50 text-purple-600 border-purple-100'
+                        }`}>
+                          <ScanFace className="h-3 w-3" /> {f.hora} — {f.zona}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-/* ────────────── Sub-components ────────────── */
+/* ────── Sub-components ────── */
 
-function DateGroup({ fecha, children }: { fecha: string; children: React.ReactNode }) {
+function Chip({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <>
-      <TableRow className="bg-gray-100/80 hover:bg-gray-100/80">
-        <TableCell colSpan={10} className="text-xs font-bold text-gray-600 uppercase tracking-wider py-2">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-            {fecha}
-          </div>
-        </TableCell>
-      </TableRow>
-      {children}
-    </>
+    <div className="inline-flex items-center gap-1.5 bg-white border border-gray-200 rounded-lg px-3 py-1.5">
+      <span className="text-gray-400">{icon}</span>
+      <span className="text-[10px] text-gray-400">{label}</span>
+      <span className="text-xs font-bold text-gray-800">{value}</span>
+    </div>
   );
 }
 
-function PodiumCard({
-  rank, entry, onOpen,
-}: {
-  rank: number;
-  entry: RankingEntry;
-  onOpen: (codigo: number) => void;
-}) {
-  const heights = { 1: 'h-28', 2: 'h-20', 3: 'h-16' };
-  const bgColors = { 1: 'from-amber-400 to-amber-500', 2: 'from-gray-300 to-gray-400', 3: 'from-amber-600 to-amber-700' };
-  const textColors = { 1: 'text-amber-500', 2: 'text-gray-500', 3: 'text-amber-700' };
-  const sizes = { 1: 'w-36', 2: 'w-28', 3: 'w-28' };
+function TimelineView({ day }: { day: EmployeeDay }) {
+  const events = useMemo(() => {
+    const list: { hora: string; seg: number; tipo: 'entrada' | 'salida' | 'facial' | 'comida'; label: string }[] = [];
+    for (const ev of day.accesosEventos) {
+      const seg = timeToS(ev.hora);
+      if (ev.terminal === 'Entrada Depo') list.push({ hora: ev.hora, seg, tipo: 'entrada', label: 'Entrada Depo' });
+      else if (ev.terminal === 'Salida Depo') list.push({ hora: ev.hora, seg, tipo: 'salida', label: 'Salida Depo' });
+    }
+    for (const f of day.facialRegistros) list.push({ hora: f.hora, seg: timeToS(f.hora), tipo: 'facial', label: f.zona || 'Facial' });
+    for (const h of day.comidasHoras) list.push({ hora: h, seg: timeToS(h), tipo: 'comida', label: 'TK Comida' });
+    return list.sort((a, b) => a.seg - b.seg);
+  }, [day]);
+
+  if (events.length === 0) return <p className="text-sm text-gray-300 italic py-2">Sin eventos</p>;
+
+  const minSeg = Math.max(0, Math.floor(events[0].seg / 3600) * 3600 - 3600);
+  const maxSeg = Math.min(86400, Math.ceil(events[events.length - 1].seg / 3600) * 3600 + 3600);
+  const range = maxSeg - minSeg || 1;
+  const pct = (seg: number) => ((seg - minSeg) / range) * 100;
+
+  // Outside bands
+  const bands = day.tiemposFuera.map(t => ({
+    left: pct(timeToS(t.salida)),
+    width: Math.min(((timeToS(t.entrada) - timeToS(t.salida) + (timeToS(t.entrada) < timeToS(t.salida) ? 86400 : 0)) / range) * 100, 100),
+  }));
+
+  const markerStyle: Record<string, { bg: string; icon: typeof LogIn }> = {
+    entrada: { bg: 'bg-emerald-500', icon: LogIn },
+    salida: { bg: 'bg-red-500', icon: LogOut },
+    facial: { bg: 'bg-blue-500', icon: ScanFace },
+    comida: { bg: 'bg-orange-500', icon: UtensilsCrossed },
+  };
 
   return (
-    <div
-      className="flex flex-col items-center cursor-pointer group"
-      onClick={() => onOpen(entry.codigoEmp)}
-    >
-      {/* Avatar */}
-      <div className={`mb-2 w-12 h-12 rounded-full bg-gradient-to-br ${bgColors[rank]} flex items-center justify-center shadow-md group-hover:scale-110 transition-transform`}>
-        <span className="text-white font-bold text-lg">{rank}</span>
+    <div className="space-y-1">
+      {/* Bar */}
+      <div className="relative h-10 bg-gray-100 rounded-lg border border-gray-200 overflow-visible">
+        {bands.map((b, i) => (
+          <div key={i} className="absolute top-0 bottom-0 bg-red-100/70 rounded" style={{ left: `${b.left}%`, width: `${b.width}%` }} />
+        ))}
+        {events.map((ev, i) => {
+          const ms = markerStyle[ev.tipo] || markerStyle.entrada;
+          const Icon = ms.icon;
+          return (
+            <div key={i} className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 group" style={{ left: `${pct(ev.seg)}%` }}>
+              <div className={`w-5 h-5 ${ms.bg} rounded-full flex items-center justify-center text-white shadow-sm hover:scale-125 transition-transform cursor-default`}>
+                <Icon className="h-2.5 w-2.5" />
+              </div>
+              <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 whitespace-nowrap px-1.5 py-0.5 rounded text-[9px] bg-gray-900 text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                {ev.hora} — {ev.label}
+              </div>
+            </div>
+          );
+        })}
       </div>
-      {/* Name */}
-      <p className="text-xs font-semibold text-gray-800 text-center max-w-[130px] truncate">
-        {entry.nombre}
-      </p>
-      {/* Time */}
-      <p className={`text-sm font-bold font-mono ${textColors[rank]} mt-0.5`}>
-        {entry.totalFuera}
-      </p>
-      {/* Pedestal */}
-      <div className={`${sizes[rank]} ${heights[rank]} bg-gradient-to-b ${bgColors[rank]} rounded-t-lg mt-2 opacity-20`} />
+      {/* Legend */}
+      <div className="flex gap-3 text-[10px] text-gray-400">
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Entrada</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" /> Salida</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" /> Facial</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500" /> TK</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-1 rounded bg-red-200 border border-red-300" /> Fuera</span>
+      </div>
     </div>
   );
 }

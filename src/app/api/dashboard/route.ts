@@ -14,10 +14,20 @@ function secondsToTime(totalSec: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+function classifyTurno(hora: string): string {
+  const seg = timeToSeconds(hora);
+  const h = seg / 3600;
+  if (h >= 6 && h < 9) return 'TM';
+  if (h >= 10 && h < 14) return 'TT';
+  if (h >= 18 && h < 23) return 'TN';
+  return 'OTRO';
+}
+
 interface TimeOutPair { salida: string; entrada: string; duracionSegundos: number; duracion: string; }
 interface AccesoEvento { hora: string; terminal: string; }
 interface EmployeeDay {
   codigoEmp: number; nombre: string; fecha: string; jornada: string; sector: string; empresa: string;
+  turno: string;
   tiemposFuera: TimeOutPair[]; totalFueraSegundos: number; totalFuera: string;
   comidasHoras: string[]; facialRegistros: { hora: string; zona: string }[];
   accesosEventos: AccesoEvento[];
@@ -27,6 +37,7 @@ interface RankingEntry {
   totalFueraSegundos: number; totalFuera: string;
   diasCount: number; avgPorDia: string; maxDiaFuera: string; maxDiaFecha: string;
 }
+interface TurnoRanking { turno: string; label: string; empleados: RankingEntry[]; }
 
 export async function GET() {
   try {
@@ -42,7 +53,7 @@ export async function GET() {
 
     if (accesos.length === 0) {
       return NextResponse.json({
-        employees: [], ranking: [], turnos: [],
+        employees: [], ranking: [], turnos: [], rankingPorTurno: [],
         summary: { totalEmployees: 0, totalRecords: 0, totalComidas: 0, totalFacial: 0, avgOutsidePerEmployee: '00:00:00', dates: [] },
       });
     }
@@ -73,14 +84,8 @@ export async function GET() {
 
     // Extract unique dates
     const dateSet = new Set<string>();
-    const turnoSet = new Set<string>();
-    for (const a of accesos) {
-      dateSet.add(String(a.fecha));
-      const j = String(a.jornada ?? '').trim();
-      if (j) turnoSet.add(j);
-    }
+    for (const a of accesos) dateSet.add(String(a.fecha));
     const dates = Array.from(dateSet).sort();
-    const turnos = Array.from(turnoSet).sort();
 
     // Build employee-day records
     const employees: EmployeeDay[] = [];
@@ -89,6 +94,15 @@ export async function GET() {
       if (records.length === 0) continue;
       const sorted = [...records].sort((a, b) => timeToSeconds(String(a.hora ?? '')) - timeToSeconds(String(b.hora ?? '')));
       const first = sorted[0];
+
+      // Determine turno: find the first "Entrada Depo" time
+      let turno = 'OTRO';
+      for (const r of sorted) {
+        if (String(r.terminal ?? '') === 'Entrada Depo') {
+          turno = classifyTurno(String(r.hora ?? ''));
+          break;
+        }
+      }
 
       const nombreKey = `${String(first.nombre ?? '').toUpperCase()}|${first.fecha}`;
       const comidasHoras = mealMap.get(nombreKey) || [];
@@ -132,6 +146,7 @@ export async function GET() {
         jornada: String(first.jornada ?? '').trim(),
         sector: String(first.sector ?? ''),
         empresa: String(first.empresa ?? ''),
+        turno,
         tiemposFuera, totalFueraSegundos, totalFuera: secondsToTime(totalFueraSegundos),
         comidasHoras, facialRegistros, accesosEventos,
       });
@@ -142,41 +157,80 @@ export async function GET() {
       return a.nombre.localeCompare(b.nombre);
     });
 
-    // Build ranking: aggregate by employee across all dates
-    const rankingMap = new Map<number, { codigoEmp: number; nombre: string; empresa: string; sector: string; totalFueraSegundos: number; dias: Set<string>; diasConFuera: number[]; maxDia: { seg: number; fecha: string } }>();
+    // Build ranking: aggregate by employee across all dates, grouped by turno
+    const turnoRankingMap = new Map<string, Map<number, {
+      codigoEmp: number; nombre: string; empresa: string; sector: string;
+      totalFueraSegundos: number; dias: Set<string>; diasConFuera: number[];
+      maxDia: { seg: number; fecha: string };
+    }>>();
+
     for (const emp of employees) {
-      if (!rankingMap.has(emp.codigoEmp)) {
-        rankingMap.set(emp.codigoEmp, {
+      const t = emp.turno;
+      if (!turnoRankingMap.has(t)) turnoRankingMap.set(t, new Map());
+      const turnoMap = turnoRankingMap.get(t)!;
+
+      if (!turnoMap.has(emp.codigoEmp)) {
+        turnoMap.set(emp.codigoEmp, {
           codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector,
           totalFueraSegundos: 0, dias: new Set(), diasConFuera: [],
           maxDia: { seg: 0, fecha: '' },
         });
       }
-      const entry = rankingMap.get(emp.codigoEmp)!;
+      const entry = turnoMap.get(emp.codigoEmp)!;
       entry.totalFueraSegundos += emp.totalFueraSegundos;
       entry.dias.add(emp.fecha);
-      if (emp.totalFueraSegundos > 0) {
-        entry.diasConFuera.push(emp.totalFueraSegundos);
-      }
+      if (emp.totalFueraSegundos > 0) entry.diasConFuera.push(emp.totalFueraSegundos);
       if (emp.totalFueraSegundos > entry.maxDia.seg) {
         entry.maxDia = { seg: emp.totalFueraSegundos, fecha: emp.fecha };
       }
     }
 
-    const ranking: RankingEntry[] = Array.from(rankingMap.values())
+    const turnoLabels: Record<string, string> = { TM: 'Mañana (06:00–09:00)', TT: 'Tarde (10:00–14:00)', TN: 'Noche (18:00–23:00)', OTRO: 'Sin clasificar' };
+    const turnoOrder = ['TM', 'TT', 'TN', 'OTRO'];
+
+    const rankingPorTurno: TurnoRanking[] = turnoOrder
+      .filter(t => turnoRankingMap.has(t))
+      .map(t => {
+        const map = turnoRankingMap.get(t)!;
+        const empleados = Array.from(map.values())
+          .map(r => ({
+            codigoEmp: r.codigoEmp, nombre: r.nombre, empresa: r.empresa, sector: r.sector,
+            totalFueraSegundos: r.totalFueraSegundos, totalFuera: secondsToTime(r.totalFueraSegundos),
+            diasCount: r.dias.size,
+            avgPorDia: r.diasConFuera.length > 0 ? secondsToTime(Math.round(r.totalFueraSegundos / r.diasConFuera.length)) : '00:00:00',
+            maxDiaFuera: secondsToTime(r.maxDia.seg), maxDiaFecha: r.maxDia.fecha,
+          }))
+          .sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos);
+        return { turno: t, label: turnoLabels[t], empleados };
+      });
+
+    // Also build a flat ranking (all turnos combined)
+    const allRankingMap = new Map<number, {
+      codigoEmp: number; nombre: string; empresa: string; sector: string;
+      totalFueraSegundos: number; dias: Set<string>; diasConFuera: number[];
+      maxDia: { seg: number; fecha: string };
+    }>();
+    for (const [, turnoMap] of turnoRankingMap) {
+      for (const [, v] of turnoMap) {
+        if (!allRankingMap.has(v.codigoEmp)) {
+          allRankingMap.set(v.codigoEmp, { ...v, dias: new Set(v.dias), diasConFuera: [...v.diasConFuera] });
+        } else {
+          const existing = allRankingMap.get(v.codigoEmp)!;
+          existing.totalFueraSegundos += v.totalFueraSegundos;
+          for (const d of v.dias) existing.dias.add(d);
+          existing.diasConFuera.push(...v.diasConFuera);
+          if (v.maxDia.seg > existing.maxDia.seg) existing.maxDia = v.maxDia;
+        }
+      }
+    }
+
+    const ranking: RankingEntry[] = Array.from(allRankingMap.values())
       .map(r => ({
-        codigoEmp: r.codigoEmp,
-        nombre: r.nombre,
-        empresa: r.empresa,
-        sector: r.sector,
-        totalFueraSegundos: r.totalFueraSegundos,
-        totalFuera: secondsToTime(r.totalFueraSegundos),
+        codigoEmp: r.codigoEmp, nombre: r.nombre, empresa: r.empresa, sector: r.sector,
+        totalFueraSegundos: r.totalFueraSegundos, totalFuera: secondsToTime(r.totalFueraSegundos),
         diasCount: r.dias.size,
-        avgPorDia: r.diasConFuera.length > 0
-          ? secondsToTime(Math.round(r.totalFueraSegundos / r.diasConFuera.length))
-          : '00:00:00',
-        maxDiaFuera: secondsToTime(r.maxDia.seg),
-        maxDiaFecha: r.maxDia.fecha,
+        avgPorDia: r.diasConFuera.length > 0 ? secondsToTime(Math.round(r.totalFueraSegundos / r.diasConFuera.length)) : '00:00:00',
+        maxDiaFuera: secondsToTime(r.maxDia.seg), maxDiaFecha: r.maxDia.fecha,
       }))
       .sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos);
 
@@ -186,7 +240,8 @@ export async function GET() {
     return NextResponse.json({
       employees,
       ranking,
-      turnos,
+      rankingPorTurno,
+      turnos: turnoOrder.filter(t => turnoRankingMap.has(t)),
       summary: {
         totalEmployees: uniqueEmployees.size,
         totalRecords: accesos.length,
