@@ -14,6 +14,20 @@ function secondsToTime(totalSec: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+interface TimeOutPair { salida: string; entrada: string; duracionSegundos: number; duracion: string; }
+interface AccesoEvento { hora: string; terminal: string; }
+interface EmployeeDay {
+  codigoEmp: number; nombre: string; fecha: string; jornada: string; sector: string; empresa: string;
+  tiemposFuera: TimeOutPair[]; totalFueraSegundos: number; totalFuera: string;
+  comidasHoras: string[]; facialRegistros: { hora: string; zona: string }[];
+  accesosEventos: AccesoEvento[];
+}
+interface RankingEntry {
+  codigoEmp: number; nombre: string; empresa: string; sector: string;
+  totalFueraSegundos: number; totalFuera: string;
+  diasCount: number; avgPorDia: string; maxDiaFuera: string; maxDiaFecha: string;
+}
+
 export async function GET() {
   try {
     const [accesosResult, comidasResult, facialResult] = await Promise.all([
@@ -27,9 +41,13 @@ export async function GET() {
     const facial = facialResult.rows as Record<string, unknown>[];
 
     if (accesos.length === 0) {
-      return NextResponse.json({ employees: [], dates: [], summary: { totalEmployees: 0, totalRecords: 0, totalComidas: 0, totalFacial: 0, avgOutsidePerEmployee: '00:00:00', dates: [] } });
+      return NextResponse.json({
+        employees: [], ranking: [], turnos: [],
+        summary: { totalEmployees: 0, totalRecords: 0, totalComidas: 0, totalFacial: 0, avgOutsidePerEmployee: '00:00:00', dates: [] },
+      });
     }
 
+    // Build meal lookup
     const mealMap = new Map<string, string[]>();
     for (const c of comidas) {
       const key = `${String(c.nombre ?? '').toUpperCase()}|${c.fecha}`;
@@ -37,6 +55,7 @@ export async function GET() {
       mealMap.get(key)!.push(String(c.hora ?? ''));
     }
 
+    // Build facial lookup
     const facialMap = new Map<string, { hora: string; zona: string }[]>();
     for (const f of facial) {
       const key = `${String(f.persona ?? '').toUpperCase()}|${f.fecha}`;
@@ -44,6 +63,7 @@ export async function GET() {
       facialMap.get(key)!.push({ hora: String(f.hora ?? ''), zona: String(f.zona ?? '') });
     }
 
+    // Group access records by (codigoEmp, fecha)
     const grouped = new Map<string, Record<string, unknown>[]>();
     for (const a of accesos) {
       const key = `${a.codigoEmp}|${a.fecha}`;
@@ -51,17 +71,18 @@ export async function GET() {
       grouped.get(key)!.push(a);
     }
 
+    // Extract unique dates
     const dateSet = new Set<string>();
-    for (const a of accesos) dateSet.add(String(a.fecha));
-    const dates = Array.from(dateSet).sort();
-
-    interface TimeOutPair { salida: string; entrada: string; duracionSegundos: number; duracion: string; }
-    interface EmployeeDay {
-      codigoEmp: number; nombre: string; fecha: string; jornada: string; sector: string; empresa: string;
-      tiemposFuera: TimeOutPair[]; totalFueraSegundos: number; totalFuera: string;
-      comidasHoras: string[]; facialRegistros: { hora: string; zona: string }[];
+    const turnoSet = new Set<string>();
+    for (const a of accesos) {
+      dateSet.add(String(a.fecha));
+      const j = String(a.jornada ?? '').trim();
+      if (j) turnoSet.add(j);
     }
+    const dates = Array.from(dateSet).sort();
+    const turnos = Array.from(turnoSet).sort();
 
+    // Build employee-day records
     const employees: EmployeeDay[] = [];
 
     for (const [, records] of grouped) {
@@ -73,6 +94,13 @@ export async function GET() {
       const comidasHoras = mealMap.get(nombreKey) || [];
       const facialRegistros = facialMap.get(nombreKey) || [];
 
+      // Raw access events for timeline
+      const accesosEventos: AccesoEvento[] = sorted.map(r => ({
+        hora: String(r.hora ?? ''),
+        terminal: String(r.terminal ?? ''),
+      }));
+
+      // Pair Salida Depo -> next Entrada Depo
       const tiemposFuera: TimeOutPair[] = [];
       let i = 0;
       while (i < sorted.length) {
@@ -101,11 +129,11 @@ export async function GET() {
         codigoEmp: Number(first.codigoEmp ?? 0),
         nombre: String(first.nombre ?? ''),
         fecha: String(first.fecha ?? ''),
-        jornada: String(first.jornada ?? ''),
+        jornada: String(first.jornada ?? '').trim(),
         sector: String(first.sector ?? ''),
         empresa: String(first.empresa ?? ''),
         tiemposFuera, totalFueraSegundos, totalFuera: secondsToTime(totalFueraSegundos),
-        comidasHoras, facialRegistros,
+        comidasHoras, facialRegistros, accesosEventos,
       });
     }
 
@@ -114,11 +142,51 @@ export async function GET() {
       return a.nombre.localeCompare(b.nombre);
     });
 
+    // Build ranking: aggregate by employee across all dates
+    const rankingMap = new Map<number, { codigoEmp: number; nombre: string; empresa: string; sector: string; totalFueraSegundos: number; dias: Set<string>; diasConFuera: number[]; maxDia: { seg: number; fecha: string } }>();
+    for (const emp of employees) {
+      if (!rankingMap.has(emp.codigoEmp)) {
+        rankingMap.set(emp.codigoEmp, {
+          codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector,
+          totalFueraSegundos: 0, dias: new Set(), diasConFuera: [],
+          maxDia: { seg: 0, fecha: '' },
+        });
+      }
+      const entry = rankingMap.get(emp.codigoEmp)!;
+      entry.totalFueraSegundos += emp.totalFueraSegundos;
+      entry.dias.add(emp.fecha);
+      if (emp.totalFueraSegundos > 0) {
+        entry.diasConFuera.push(emp.totalFueraSegundos);
+      }
+      if (emp.totalFueraSegundos > entry.maxDia.seg) {
+        entry.maxDia = { seg: emp.totalFueraSegundos, fecha: emp.fecha };
+      }
+    }
+
+    const ranking: RankingEntry[] = Array.from(rankingMap.values())
+      .map(r => ({
+        codigoEmp: r.codigoEmp,
+        nombre: r.nombre,
+        empresa: r.empresa,
+        sector: r.sector,
+        totalFueraSegundos: r.totalFueraSegundos,
+        totalFuera: secondsToTime(r.totalFueraSegundos),
+        diasCount: r.dias.size,
+        avgPorDia: r.diasConFuera.length > 0
+          ? secondsToTime(Math.round(r.totalFueraSegundos / r.diasConFuera.length))
+          : '00:00:00',
+        maxDiaFuera: secondsToTime(r.maxDia.seg),
+        maxDiaFecha: r.maxDia.fecha,
+      }))
+      .sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos);
+
     const uniqueEmployees = new Set(employees.map(e => e.codigoEmp));
     const totalOutsideTime = employees.reduce((sum, e) => sum + e.totalFueraSegundos, 0);
 
     return NextResponse.json({
       employees,
+      ranking,
+      turnos,
       summary: {
         totalEmployees: uniqueEmployees.size,
         totalRecords: accesos.length,
