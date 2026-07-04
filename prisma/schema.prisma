@@ -1,0 +1,40 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model AccessRecord {
+  id           String   @id @default(cuid())
+  codigoEmp    Int
+  nombre       String
+  fecha        String
+  hora         String
+  terminal     String
+  jornada      String
+  sector       String
+  empresa      String
+  createdAt    DateTime @default(now())
+}
+
+model MealRecord {
+  id        String   @id @default(cuid())
+  nombre    String
+  dni       Int
+  fecha     String
+  hora      String
+  createdAt DateTime @default(now())
+}
+
+model FacialRecord {
+  id        String   @id @default(cuid())
+  persona   String
+  dni       Int
+  fecha     String
+  hora      String
+  zona      String
+  createdAt DateTime @default(now())
+}
