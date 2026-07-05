@@ -503,51 +503,68 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Times table */}
+                {/* All movements table */}
                 <div>
-                  <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Tiempos Fuera de Deposito</h3>
-                  {profileDay.tiemposFuera.length === 0 ? (
-                    <p className="text-sm text-gray-300 italic">Sin salidas registradas</p>
-                  ) : (
-                    <div className="border border-gray-200 rounded-lg overflow-hidden">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="bg-gray-50">
-                            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-left w-10">#</th>
-                            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-center">Salida</th>
-                            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-center">Entrada</th>
-                            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-right">Duracion</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                          {profileDay.tiemposFuera.map((t, i) => (
-                            <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
-                              <td className="px-3 py-2">
-                                <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-red-500 text-white text-[10px] font-bold">{i + 1}</span>
-                              </td>
-                              <td className="px-3 py-2 text-center"><span className="font-mono text-xs text-red-500 font-medium">{t.salida}</span></td>
-                              <td className="px-3 py-2 text-center"><span className="font-mono text-xs text-emerald-600 font-medium">{t.entrada}</span></td>
-                              <td className="px-3 py-2 text-right">
-                                <span className={`inline-block px-2 py-0.5 rounded font-mono text-xs font-bold ${durTextColor(t.duracionSegundos)}`}>{t.duracion}</span>
-                              </td>
-                            </tr>
-                          ))}
-                          {profileDay.tiemposFuera.length > 1 && (
-                            <tr className="bg-red-50">
-                              <td colSpan={3} className="px-3 py-2 text-xs font-semibold text-red-700">Total</td>
-                              <td className="px-3 py-2 text-right"><span className="font-mono text-xs font-black text-red-600">{profileDay.totalFuera}</span></td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
+                  <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Todos los Movimientos</h3>
+                {profileDay.accesosEventos.length === 0 ? (
+                  <p className="text-sm text-gray-300 italic">Sin movimientos registrados</p>
+                ) : (
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-gray-50">
+                          <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-left w-10">#</th>
+                          <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-center">Hora</th>
+                          <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-left">Evento</th>
+                          <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-right">Duracion Fuera</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {profileDay.accesosEventos.map((ev, i) => {
+                          const isSalida = ev.terminal === 'Salida Depo';
+                          const isEntrada = ev.terminal === 'Entrada Depo';
+                          // Find if this Salida has a paired tiempo fuera
+                          const pairedFuera = isSalida
+                            ? profileDay.tiemposFuera.find(t => t.salida === ev.hora)
+                            : isEntrada
+                              ? profileDay.tiemposFuera.find(t => t.entrada === ev.hora)
+                              : null;
 
-                {/* Timeline */}
-                <div>
-                  <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Linea de Tiempo</h3>
-                  <Timeline day={profileDay} />
+                          return (
+                            <tr key={i} className={`${isSalida ? 'bg-red-50/40' : isEntrada ? 'bg-emerald-50/40' : i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}`}>
+                              <td className="px-3 py-2">
+                                <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-200 text-gray-600 text-[10px] font-bold">{i + 1}</span>
+                              </td>
+                              <td className="px-3 py-2 text-center">
+                                <span className="font-mono text-xs font-medium text-gray-700">{ev.hora}</span>
+                              </td>
+                              <td className="px-3 py-2">
+                                <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
+                                  isEntrada ? 'bg-emerald-100 text-emerald-700' : isSalida ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
+                                }`}>
+                                  {isEntrada && <ArrowDownToLine className="h-3 w-3" />}
+                                  {isSalida && <ArrowUpFromLine className="h-3 w-3" />}
+                                  {ev.terminal}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {isSalida && pairedFuera ? (
+                                  <span className={`inline-block px-2 py-0.5 rounded font-mono text-xs font-bold ${durTextColor(pairedFuera.duracionSegundos)}`}>
+                                    {pairedFuera.duracion}
+                                  </span>
+                                ) : isEntrada && pairedFuera ? (
+                                  <span className="text-[10px] text-gray-400">← {pairedFuera.salida}</span>
+                                ) : (
+                                  <span className="text-gray-300">—</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
                 </div>
 
                 {/* Comidas */}
@@ -609,69 +626,6 @@ function MetricCard({ icon, label, value, sub, accent, subBg }: {
       {sub && (
         <p className={`text-[11px] mt-1 ${subBg || ''} px-1.5 py-0.5 rounded inline-block ${subBg ? 'text-gray-500' : 'text-gray-400'}`}>{sub}</p>
       )}
-    </div>
-  );
-}
-
-function Timeline({ day }: { day: EmployeeDay }) {
-  const events = useMemo(() => {
-    const list: { hora: string; seg: number; tipo: 'entrada' | 'salida' | 'facial' | 'comida'; label: string }[] = [];
-    for (const ev of day.accesosEventos) {
-      const seg = timeToS(ev.hora);
-      if (ev.terminal === 'Entrada Depo') list.push({ hora: ev.hora, seg, tipo: 'entrada', label: 'Entrada Depo' });
-      else if (ev.terminal === 'Salida Depo') list.push({ hora: ev.hora, seg, tipo: 'salida', label: 'Salida Depo' });
-    }
-    for (const f of day.facialRegistros) list.push({ hora: f.hora, seg: timeToS(f.hora), tipo: 'facial', label: f.zona || 'Facial' });
-    for (const h of day.comidasHoras) list.push({ hora: h, seg: timeToS(h), tipo: 'comida', label: 'TK Comida' });
-    return list.sort((a, b) => a.seg - b.seg);
-  }, [day]);
-
-  if (events.length === 0) return <p className="text-xs text-gray-300 italic py-2">Sin eventos</p>;
-
-  const minSeg = Math.max(0, Math.floor(events[0].seg / 3600) * 3600 - 3600);
-  const maxSeg = Math.min(86400, Math.ceil(events[events.length - 1].seg / 3600) * 3600 + 3600);
-  const range = maxSeg - minSeg || 1;
-  const pct = (seg: number) => ((seg - minSeg) / range) * 100;
-
-  const bands = day.tiemposFuera.map(t => ({
-    left: pct(timeToS(t.salida)),
-    width: Math.min(((timeToS(t.entrada) - timeToS(t.salida) + (timeToS(t.entrada) < timeToS(t.salida) ? 86400 : 0)) / range) * 100, 100),
-  }));
-
-  const styles: Record<string, { bg: string }> = {
-    entrada: { bg: 'bg-emerald-500' },
-    salida: { bg: 'bg-red-500' },
-    facial: { bg: 'bg-blue-500' },
-    comida: { bg: 'bg-orange-500' },
-  };
-
-  return (
-    <div className="space-y-1.5">
-      <div className="relative h-10 bg-gray-100 rounded-lg border border-gray-200">
-        {bands.map((b, i) => (
-          <div key={i} className="absolute top-0 bottom-0 bg-red-100/70 rounded" style={{ left: `${b.left}%`, width: `${b.width}%` }} />
-        ))}
-        {events.map((ev, i) => (
-          <div key={i} className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 group" style={{ left: `${pct(ev.seg)}%` }}>
-            <div className={`w-5 h-5 ${styles[ev.tipo]?.bg || 'bg-gray-400'} rounded-full flex items-center justify-center text-white shadow-sm hover:scale-125 transition-transform cursor-default`}>
-              {ev.tipo === 'entrada' && <ArrowDownToLine className="h-2.5 w-2.5" />}
-              {ev.tipo === 'salida' && <ArrowUpFromLine className="h-2.5 w-2.5" />}
-              {ev.tipo === 'facial' && <ScanFace className="h-2.5 w-2.5" />}
-              {ev.tipo === 'comida' && <UtensilsCrossed className="h-2.5 w-2.5" />}
-            </div>
-            <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 whitespace-nowrap px-1.5 py-0.5 rounded text-[9px] bg-gray-900 text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-              {ev.hora} — {ev.label}
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="flex gap-3 text-[10px] text-gray-400">
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Entrada</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" /> Salida</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" /> Facial</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500" /> TK</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-1 rounded bg-red-200 border border-red-300" /> Fuera</span>
-      </div>
     </div>
   );
 }
