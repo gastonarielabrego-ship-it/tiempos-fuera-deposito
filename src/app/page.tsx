@@ -503,99 +503,11 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* All movements table */}
+                {/* All movements - unified table */}
                 <div>
                   <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Todos los Movimientos</h3>
-                {profileDay.accesosEventos.length === 0 ? (
-                  <p className="text-sm text-gray-300 italic">Sin movimientos registrados</p>
-                ) : (
-                  <div className="border border-gray-200 rounded-lg overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-gray-50">
-                          <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-left w-10">#</th>
-                          <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-center">Hora</th>
-                          <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-left">Evento</th>
-                          <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-right">Duracion Fuera</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {profileDay.accesosEventos.map((ev, i) => {
-                          const isSalida = ev.terminal === 'Salida Depo';
-                          const isEntrada = ev.terminal === 'Entrada Depo';
-                          // Find if this Salida has a paired tiempo fuera
-                          const pairedFuera = isSalida
-                            ? profileDay.tiemposFuera.find(t => t.salida === ev.hora)
-                            : isEntrada
-                              ? profileDay.tiemposFuera.find(t => t.entrada === ev.hora)
-                              : null;
-
-                          return (
-                            <tr key={i} className={`${isSalida ? 'bg-red-50/40' : isEntrada ? 'bg-emerald-50/40' : i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}`}>
-                              <td className="px-3 py-2">
-                                <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-200 text-gray-600 text-[10px] font-bold">{i + 1}</span>
-                              </td>
-                              <td className="px-3 py-2 text-center">
-                                <span className="font-mono text-xs font-medium text-gray-700">{ev.hora}</span>
-                              </td>
-                              <td className="px-3 py-2">
-                                <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
-                                  isEntrada ? 'bg-emerald-100 text-emerald-700' : isSalida ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
-                                }`}>
-                                  {isEntrada && <ArrowDownToLine className="h-3 w-3" />}
-                                  {isSalida && <ArrowUpFromLine className="h-3 w-3" />}
-                                  {ev.terminal}
-                                </span>
-                              </td>
-                              <td className="px-3 py-2 text-right">
-                                {isSalida && pairedFuera ? (
-                                  <span className={`inline-block px-2 py-0.5 rounded font-mono text-xs font-bold ${durTextColor(pairedFuera.duracionSegundos)}`}>
-                                    {pairedFuera.duracion}
-                                  </span>
-                                ) : isEntrada && pairedFuera ? (
-                                  <span className="text-[10px] text-gray-400">← {pairedFuera.salida}</span>
-                                ) : (
-                                  <span className="text-gray-300">—</span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                  <UnifiedMovements day={profileDay} />
                 </div>
-
-                {/* Comidas */}
-                {profileDay.comidasHoras.length > 0 && (
-                  <div>
-                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">TK Comida</h3>
-                    <div className="flex flex-wrap gap-1.5">
-                      {profileDay.comidasHoras.map((h, i) => (
-                        <span key={i} className="inline-flex items-center gap-1 text-xs bg-orange-50 text-orange-600 px-2.5 py-1 rounded-full border border-orange-200">
-                          <UtensilsCrossed className="h-3 w-3" /> {h}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Facial */}
-                {profileDay.facialRegistros.length > 0 && (
-                  <div>
-                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Registros Faciales</h3>
-                    <div className="flex flex-wrap gap-1.5">
-                      {profileDay.facialRegistros.map((f, i) => (
-                        <span key={i} className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border ${
-                          f.zona.toLowerCase().includes('entrada') ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-purple-50 text-purple-600 border-purple-200'
-                        }`}>
-                          <ScanFace className="h-3 w-3" /> {f.hora} — {f.zona}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             </ScrollArea>
           )}
@@ -604,6 +516,102 @@ export default function Home() {
 
       {/* Toast notification */}
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+    </div>
+  );
+}
+
+/* Unified movements table: accesos + facial + comidas sorted by time */
+interface UnifiedEvent {
+  hora: string; seg: number; tipo: 'entrada' | 'salida' | 'facial' | 'comida' | 'otro';
+  label: string; duracion?: string; duracionSeg?: number;
+}
+
+function UnifiedMovements({ day }: { day: EmployeeDay }) {
+  const events = useMemo(() => {
+    const list: UnifiedEvent[] = [];
+
+    // Access events
+    for (const ev of day.accesosEventos) {
+      const seg = timeToS(ev.hora);
+      if (ev.terminal === 'Entrada Depo') {
+        const paired = day.tiemposFuera.find(t => t.entrada === ev.hora);
+        list.push({
+          hora: ev.hora, seg, tipo: 'entrada', label: 'Entrada Depo',
+          duracion: paired?.duracion, duracionSeg: paired?.duracionSegundos,
+        });
+      } else if (ev.terminal === 'Salida Depo') {
+        list.push({ hora: ev.hora, seg, tipo: 'salida', label: 'Salida Depo' });
+      } else {
+        list.push({ hora: ev.hora, seg, tipo: 'otro', label: ev.terminal });
+      }
+    }
+
+    // Facial events
+    for (const f of day.facialRegistros) {
+      list.push({ hora: f.hora, seg: timeToS(f.hora), tipo: 'facial', label: f.zona || 'Facial' });
+    }
+
+    // Comida events
+    for (const h of day.comidasHoras) {
+      list.push({ hora: h, seg: timeToS(h), tipo: 'comida', label: 'TK Comida' });
+    }
+
+    return list.sort((a, b) => a.seg - b.seg);
+  }, [day]);
+
+  if (events.length === 0) return <p className="text-sm text-gray-300 italic">Sin movimientos registrados</p>;
+
+  const styleMap: Record<string, { bg: string; icon: typeof ArrowDownToLine }> = {
+    entrada: { bg: 'bg-emerald-100 text-emerald-700', icon: ArrowDownToLine },
+    salida:  { bg: 'bg-red-100 text-red-700', icon: ArrowUpFromLine },
+    facial:  { bg: 'bg-blue-100 text-blue-700', icon: ScanFace },
+    comida:  { bg: 'bg-orange-100 text-orange-700', icon: UtensilsCrossed },
+    otro:    { bg: 'bg-gray-100 text-gray-600', icon: Clock },
+  };
+
+  return (
+    <div className="border border-gray-200 rounded-lg overflow-hidden">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-gray-50">
+            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-left w-10">#</th>
+            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-center">Hora</th>
+            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-left">Evento</th>
+            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-right">Tiempo Fuera</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {events.map((ev, i) => {
+            const s = styleMap[ev.tipo] || styleMap.otro;
+            const Icon = s.icon;
+            return (
+              <tr key={i} className={ev.tipo === 'salida' ? 'bg-red-50/30' : ev.tipo === 'entrada' ? 'bg-emerald-50/30' : ''}>
+                <td className="px-3 py-2">
+                  <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-200 text-gray-600 text-[10px] font-bold">{i + 1}</span>
+                </td>
+                <td className="px-3 py-2 text-center">
+                  <span className="font-mono text-xs font-medium text-gray-700">{ev.hora}</span>
+                </td>
+                <td className="px-3 py-2">
+                  <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${s.bg}`}>
+                    <Icon className="h-3 w-3" />
+                    {ev.label}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {ev.duracion ? (
+                    <span className={`inline-block px-2 py-0.5 rounded font-mono text-xs font-bold ${durTextColor(ev.duracionSeg ?? 0)}`}>
+                      {ev.duracion}
+                    </span>
+                  ) : (
+                    <span className="text-gray-300">—</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
