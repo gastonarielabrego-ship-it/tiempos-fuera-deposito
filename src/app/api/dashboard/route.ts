@@ -19,7 +19,7 @@ function classifyTurno(hora: string): string {
   const h = seg / 3600;
   if (h >= 6 && h < 9) return 'TM';
   if (h >= 10 && h < 14) return 'TT';
-  if (h >= 18 && h < 23) return 'TN';
+  if (h >= 18) return 'TN';
   return 'OTRO';
 }
 
@@ -116,11 +116,23 @@ export async function GET() {
       }));
 
       // Pair Salida Depo -> next Entrada Depo
+      // For TN: exclude pairs where salida >= 05:30 (shift transition, not real time outside)
+      const SALIDA_TN_CORTA_SEG = 5 * 3600 + 30 * 60; // 05:30:00
+      const isTN = turno === 'TN';
+
       const tiemposFuera: TimeOutPair[] = [];
       let i = 0;
       while (i < sorted.length) {
         if (String(sorted[i].terminal ?? '') === 'Salida Depo') {
           const salida = sorted[i];
+          const salidaSeg = timeToSeconds(String(salida.hora ?? ''));
+
+          // For TN turno, skip if salida is at/after 05:30 (shift change gap)
+          if (isTN && salidaSeg >= SALIDA_TN_CORTA_SEG) {
+            i++;
+            continue;
+          }
+
           let entrada: Record<string, unknown> | null = null;
           for (let j = i + 1; j < sorted.length; j++) {
             if (String(sorted[j].terminal ?? '') === 'Entrada Depo') { entrada = sorted[j]; break; }
