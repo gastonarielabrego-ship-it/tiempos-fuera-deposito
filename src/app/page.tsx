@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   Upload, RefreshCw, Clock, Users,
   FileSpreadsheet, Search, Sun, Sunset, Moon,
-  AlertTriangle, CheckCircle2, XCircle,
+  AlertTriangle, CheckCircle2, XCircle, Coffee,
 } from 'lucide-react';
 
 /* ═══════════════════════════════════════
@@ -99,6 +99,7 @@ export default function Home() {
   const [uploading, setUploading] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filterTurno, setFilterTurno] = useState('all');
+  const [activeTab, setActiveTab] = useState<'ranking' | 'desayuno'>('ranking');
   const [showUpload, setShowUpload] = useState(false);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -195,6 +196,54 @@ export default function Home() {
   const openProfile = (codigo: number) => {
     window.location.href = `/operator/${codigo}`;
   };
+
+  /* ── Exceso Desayuno data ── */
+  // Salida between 06:45 (24300s) and 09:45 (35100s), duration > 25 min (1500s)
+  const DESAYUNO_MIN_SEG = 25 * 60;
+  const DESAYUNO_SALIDA_MIN = 6 * 3600 + 45 * 60;  // 06:45
+  const DESAYUNO_SALIDA_MAX = 9 * 3600 + 45 * 60;  // 09:45
+
+  const desayunoRanking = useMemo(() => {
+    if (!data) return [];
+    // Build aggregated map: codigoEmp -> desayuno excess data
+    const map = new Map<number, {
+      codigoEmp: number; nombre: string; empresa: string; sector: string;
+      totalFueraSegundos: number; dias: Set<string>; eventos: { fecha: string; salida: string; entrada: string; duracion: string; duracionSegundos: number }[];
+    }>();
+
+    for (const emp of data.employees) {
+      for (const tf of emp.tiemposFuera) {
+        const salidaSeg = timeToS(tf.salida);
+        const inWindow = salidaSeg >= DESAYUNO_SALIDA_MIN && salidaSeg <= DESAYUNO_SALIDA_MAX;
+        const isExcess = tf.duracionSegundos > DESAYUNO_MIN_SEG;
+        if (inWindow && isExcess) {
+          if (!map.has(emp.codigoEmp)) {
+            map.set(emp.codigoEmp, {
+              codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector,
+              totalFueraSegundos: 0, dias: new Set(), eventos: [],
+            });
+          }
+          const entry = map.get(emp.codigoEmp)!;
+          entry.totalFueraSegundos += tf.duracionSegundos;
+          entry.dias.add(emp.fecha);
+          entry.eventos.push({ fecha: emp.fecha, salida: tf.salida, entrada: tf.entrada, duracion: tf.duracion, duracionSegundos: tf.duracionSegundos });
+        }
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos);
+  }, [data]);
+
+  const desayunoFiltered = useMemo(() => {
+    return desayunoRanking.filter(e => {
+      const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || String(e.codigoEmp).includes(search);
+      return matchSearch;
+    });
+  }, [desayunoRanking, search]);
+
+  const desayunoTotalEventos = desayunoRanking.reduce((s, e) => s + e.eventos.length, 0);
+  const desayunoTotalSegundos = desayunoRanking.reduce((s, e) => s + e.totalFueraSegundos, 0);
+  const desayunoEmpleadosUnicos = desayunoRanking.length;
 
   const totalFueraAll = data?.ranking.reduce((s, e) => s + e.totalFueraSegundos, 0) || 0;
   const maxFuera = data?.ranking[0];
@@ -318,113 +367,273 @@ export default function Home() {
             ══════════════════════════════════════ */}
         {hasData && !loading && (
           <>
-            {/* ── Metric Cards ── */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <MetricCard icon={<Users className="h-5 w-5 text-blue-500" />} label="Total Empleados" value={String(data.summary.totalEmployees)} accent="border-l-blue-500" />
-              <MetricCard icon={<Clock className="h-5 w-5 text-red-500" />} label="Suma Tiempos Fuera" value={formatHMS(totalFueraAll)} sub={`${totalEventos} eventos`} accent="border-l-red-500" subBg="bg-red-50" />
-              <MetricCard icon={<AlertTriangle className="h-5 w-5 text-amber-500" />} label="Promedio por Empleado" value={data.summary.avgOutsidePerEmployee} accent="border-l-amber-500" />
-              <MetricCard icon={<Clock className="h-5 w-5 text-orange-500" />} label="Mayor Tiempo Fuera" value={maxFuera ? maxFuera.totalFuera : '00:00:00'} sub={maxFuera ? maxFuera.nombre : ''} accent="border-l-orange-500" />
+            {/* ── Tabs ── */}
+            <div className="flex items-center gap-1 border-b border-gray-200">
+              <button onClick={() => setActiveTab('ranking')}
+                className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors ${activeTab === 'ranking' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                Ranking General
+              </button>
+              <button onClick={() => setActiveTab('desayuno')}
+                className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === 'desayuno' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                <Coffee className="h-3.5 w-3.5" /> Exceso Desayuno
+              </button>
             </div>
 
-            {/* ── Summary bar ── */}
-            <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-2.5 flex items-center gap-6 flex-wrap">
-              <div className="flex items-center gap-1.5 text-red-600">
-                <AlertTriangle className="h-4 w-4" />
-                <span className="text-xs font-semibold uppercase tracking-wider">Resumen</span>
-              </div>
-              <span className="text-sm"><b className="text-red-600">{totalEventos}</b> <span className="text-gray-500">salidas</span></span>
-              <span className="text-sm"><b className="text-red-600">{formatHMS(totalFueraAll)}</b> <span className="text-gray-500">suma total</span></span>
-              <span className="text-sm"><b className="text-red-600">{data.summary.totalEmployees}</b> <span className="text-gray-500">empleados</span></span>
-            </div>
+            {/* ═══════════ TAB: RANKING GENERAL ═══════════ */}
+            {activeTab === 'ranking' && (
+              <div className="space-y-4 pt-1">
+                {/* ── Metric Cards ── */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <MetricCard icon={<Users className="h-5 w-5 text-blue-500" />} label="Total Empleados" value={String(data.summary.totalEmployees)} accent="border-l-blue-500" />
+                  <MetricCard icon={<Clock className="h-5 w-5 text-red-500" />} label="Suma Tiempos Fuera" value={formatHMS(totalFueraAll)} sub={`${totalEventos} eventos`} accent="border-l-red-500" subBg="bg-red-50" />
+                  <MetricCard icon={<AlertTriangle className="h-5 w-5 text-amber-500" />} label="Promedio por Empleado" value={data.summary.avgOutsidePerEmployee} accent="border-l-amber-500" />
+                  <MetricCard icon={<Clock className="h-5 w-5 text-orange-500" />} label="Mayor Tiempo Fuera" value={maxFuera ? maxFuera.totalFuera : '00:00:00'} sub={maxFuera ? maxFuera.nombre : ''} accent="border-l-orange-500" />
+                </div>
 
-            {/* ── Ranking table ── */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-bold text-gray-800">Ranking por Tiempo Fuera de Deposito</h2>
-                <span className="text-xs text-gray-400">{filteredRanking.length} operadores</span>
-              </div>
+                {/* ── Summary bar ── */}
+                <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-2.5 flex items-center gap-6 flex-wrap">
+                  <div className="flex items-center gap-1.5 text-red-600">
+                    <AlertTriangle className="h-4 w-4" />
+                    <span className="text-xs font-semibold uppercase tracking-wider">Resumen</span>
+                  </div>
+                  <span className="text-sm"><b className="text-red-600">{totalEventos}</b> <span className="text-gray-500">salidas</span></span>
+                  <span className="text-sm"><b className="text-red-600">{formatHMS(totalFueraAll)}</b> <span className="text-gray-500">suma total</span></span>
+                  <span className="text-sm"><b className="text-red-600">{data.summary.totalEmployees}</b> <span className="text-gray-500">empleados</span></span>
+                </div>
 
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-gray-50 text-left">
-                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
-                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
-                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-20">Turno</th>
-                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-32">T. Fuera Deposito</th>
-                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Prom/Dia</th>
-                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Dias</th>
-                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Mayor Dia</th>
-                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-16">Eventos</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {filteredRanking.map((emp, idx) => {
-                        const pos = idx + 1;
-                        const rankBadge = pos <= 3 ? 'bg-red-500' : pos <= 7 ? 'bg-orange-400' : '';
-                        const rowBg = pos <= 3 ? 'bg-red-50/40' : '';
-                        const empTurno = empTurnoMap.get(emp.codigoEmp) || '';
-                        const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
-                        const TurnoIcon = tMeta.icon;
+                {/* ── Ranking table ── */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-sm font-bold text-gray-800">Ranking por Tiempo Fuera de Deposito</h2>
+                    <span className="text-xs text-gray-400">{filteredRanking.length} operadores</span>
+                  </div>
 
-                        return (
-                          <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-gray-50 cursor-pointer transition-colors`}
-                            onClick={() => openProfile(emp.codigoEmp)}>
-                            <td className="px-3 py-3">
-                              {rankBadge ? (
-                                <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
-                              ) : (
-                                <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
-                              )}
-                            </td>
-                            <td className="px-3 py-3">
-                              <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
-                              <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
-                            </td>
-                            <td className="px-3 py-3">
-                              <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
-                                <TurnoIcon className="h-3 w-3" /> {empTurno}
-                              </span>
-                            </td>
-                            <td className="px-3 py-3 text-right">
-                              <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>{emp.totalFuera}</span>
-                            </td>
-                            <td className="px-3 py-3 text-right"><span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span></td>
-                            <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
-                            <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
-                            <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.eventosCount}</span></td>
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-gray-50 text-left">
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-20">Turno</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-32">T. Fuera Deposito</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Prom/Dia</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Dias</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Mayor Dia</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-16">Eventos</th>
                           </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {filteredRanking.map((emp, idx) => {
+                            const pos = idx + 1;
+                            const rankBadge = pos <= 3 ? 'bg-red-500' : pos <= 7 ? 'bg-orange-400' : '';
+                            const rowBg = pos <= 3 ? 'bg-red-50/40' : '';
+                            const empTurno = empTurnoMap.get(emp.codigoEmp) || '';
+                            const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
+                            const TurnoIcon = tMeta.icon;
+
+                            return (
+                              <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-gray-50 cursor-pointer transition-colors`}
+                                onClick={() => openProfile(emp.codigoEmp)}>
+                                <td className="px-3 py-3">
+                                  {rankBadge ? (
+                                    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
+                                  ) : (
+                                    <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-3">
+                                  <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
+                                  <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
+                                </td>
+                                <td className="px-3 py-3">
+                                  <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
+                                    <TurnoIcon className="h-3 w-3" /> {empTurno}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-3 text-right">
+                                  <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>{emp.totalFuera}</span>
+                                </td>
+                                <td className="px-3 py-3 text-right"><span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span></td>
+                                <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
+                                <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
+                                <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.eventosCount}</span></td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── Por Turno cards ── */}
+                {filteredTurnoCards.length > 0 && (
+                  <div>
+                    <h2 className="text-sm font-bold text-gray-800 mb-3">Por Turno</h2>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {filteredTurnoCards.map(tr => {
+                        const tm = turnoMeta[tr.turno] || DEFAULT_TURNO_META;
+                        const TIcon = tm.icon;
+                        return (
+                          <div key={tr.turno} className={`rounded-xl border ${tm.border} ${tm.bg} p-4 cursor-pointer hover:shadow-md transition-shadow`}
+                            onClick={() => { setFilterTurno(tr.turno); }}>
+                            <div className="flex items-center gap-2 mb-1">
+                              <TIcon className={`h-4 w-4 ${tm.text}`} />
+                              <span className={`text-sm font-bold ${tm.text}`}>{tr.turno}</span>
+                              <span className="text-[10px] text-gray-400">{tm.label}</span>
+                            </div>
+                            <p className={`text-xl font-black font-mono ${tm.text}`}>{tr.totalFuera}</p>
+                            <p className="text-xs text-gray-500 mt-1">{tr.eventosCount} eventos &middot; {tr.empleados.length} operadores</p>
+                          </div>
                         );
                       })}
-                    </tbody>
-                  </table>
-                </div>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
+            )}
 
-            {/* ── Por Turno cards ── */}
-            {filteredTurnoCards.length > 0 && (
-              <div>
-                <h2 className="text-sm font-bold text-gray-800 mb-3">Por Turno</h2>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {filteredTurnoCards.map(tr => {
-                    const tm = turnoMeta[tr.turno] || DEFAULT_TURNO_META;
-                    const TIcon = tm.icon;
-                    return (
-                      <div key={tr.turno} className={`rounded-xl border ${tm.border} ${tm.bg} p-4 cursor-pointer hover:shadow-md transition-shadow`}
-                        onClick={() => { setFilterTurno(tr.turno); }}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <TIcon className={`h-4 w-4 ${tm.text}`} />
-                          <span className={`text-sm font-bold ${tm.text}`}>{tr.turno}</span>
-                          <span className="text-[10px] text-gray-400">{tm.label}</span>
-                        </div>
-                        <p className={`text-xl font-black font-mono ${tm.text}`}>{tr.totalFuera}</p>
-                        <p className="text-xs text-gray-500 mt-1">{tr.eventosCount} eventos &middot; {tr.empleados.length} operadores</p>
-                      </div>
-                    );
-                  })}
+            {/* ═══════════ TAB: EXCESO DESAYUNO ═══════════ */}
+            {activeTab === 'desayuno' && (
+              <div className="space-y-4 pt-1">
+                {/* Info banner */}
+                <div className="bg-orange-50 border border-orange-200 rounded-lg px-4 py-3 flex items-center gap-3">
+                  <Coffee className="h-5 w-5 text-orange-500 shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-orange-700">Exceso de Desayuno</p>
+                    <p className="text-xs text-orange-500 mt-0.5">Salidas entre 06:45 y 09:45 hs con duracion mayor a 25 minutos</p>
+                  </div>
                 </div>
+
+                {/* Metric cards */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <MetricCard icon={<Users className="h-5 w-5 text-orange-500" />} label="Empleados con Exceso" value={String(desayunoEmpleadosUnicos)} accent="border-l-orange-500" />
+                  <MetricCard icon={<Clock className="h-5 w-5 text-red-500" />} label="Suma Excesos" value={formatHMS(desayunoTotalSegundos)} sub={`${desayunoTotalEventos} eventos`} accent="border-l-red-500" subBg="bg-red-50" />
+                  <MetricCard icon={<Coffee className="h-5 w-5 text-amber-500" />} label="Promedio por Empleado" value={desayunoEmpleadosUnicos > 0 ? formatHMS(Math.round(desayunoTotalSegundos / desayunoEmpleadosUnicos)) : '0h 0m 0s'} accent="border-l-amber-500" />
+                  <MetricCard icon={<AlertTriangle className="h-5 w-5 text-red-600" />} label="Mayor Exceso" value={desayunoRanking[0] ? [...desayunoRanking[0].eventos].sort((a, b) => b.duracionSegundos - a.duracionSegundos)[0]?.duracion || '00:00:00' : '00:00:00'} sub={desayunoRanking[0]?.nombre || ''} accent="border-l-red-600" />
+                </div>
+
+                {/* Summary bar */}
+                <div className="bg-orange-50 border border-orange-100 rounded-lg px-4 py-2.5 flex items-center gap-6 flex-wrap">
+                  <div className="flex items-center gap-1.5 text-orange-600">
+                    <Coffee className="h-4 w-4" />
+                    <span className="text-xs font-semibold uppercase tracking-wider">Resumen Desayuno</span>
+                  </div>
+                  <span className="text-sm"><b className="text-orange-600">{desayunoTotalEventos}</b> <span className="text-gray-500">excesos</span></span>
+                  <span className="text-sm"><b className="text-orange-600">{formatHMS(desayunoTotalSegundos)}</b> <span className="text-gray-500">suma total</span></span>
+                  <span className="text-sm"><b className="text-orange-600">{desayunoEmpleadosUnicos}</b> <span className="text-gray-500">empleados</span></span>
+                </div>
+
+                {/* Ranking table */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-sm font-bold text-gray-800">Ranking Exceso de Desayuno</h2>
+                    <span className="text-xs text-gray-400">{desayunoFiltered.length} operadores</span>
+                  </div>
+
+                  {desayunoFiltered.length === 0 ? (
+                    <div className="text-center py-12 border border-gray-200 rounded-lg">
+                      <Coffee className="h-12 w-12 mx-auto text-gray-200 mb-3" />
+                      <p className="text-gray-400 text-sm">No hay excesos de desayuno registrados</p>
+                    </div>
+                  ) : (
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-orange-50 text-left">
+                              <th className="px-3 py-2.5 text-xs font-semibold text-orange-600 w-12">#</th>
+                              <th className="px-3 py-2.5 text-xs font-semibold text-orange-600">Operador</th>
+                              <th className="px-3 py-2.5 text-xs font-semibold text-orange-600 text-right w-32">T. Exceso Total</th>
+                              <th className="px-3 py-2.5 text-xs font-semibold text-orange-600 text-right w-20">Dias</th>
+                              <th className="px-3 py-2.5 text-xs font-semibold text-orange-600 text-right w-20">Eventos</th>
+                              <th className="px-3 py-2.5 text-xs font-semibold text-orange-600 text-right w-24">Mayor Exceso</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {desayunoFiltered.map((emp, idx) => {
+                              const pos = idx + 1;
+                              const rankBadge = pos <= 3 ? 'bg-orange-500' : pos <= 7 ? 'bg-amber-400' : '';
+                              const rowBg = pos <= 3 ? 'bg-orange-50/40' : '';
+                              const maxEvento = [...emp.eventos].sort((a, b) => b.duracionSegundos - a.duracionSegundos)[0];
+
+                              return (
+                                <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-orange-50/30 cursor-pointer transition-colors`}
+                                  onClick={() => openProfile(emp.codigoEmp)}>
+                                  <td className="px-3 py-3">
+                                    {rankBadge ? (
+                                      <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
+                                    ) : (
+                                      <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-3">
+                                    <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
+                                    <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
+                                  </td>
+                                  <td className="px-3 py-3 text-right">
+                                    <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>{formatHMS(emp.totalFueraSegundos)}</span>
+                                  </td>
+                                  <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.dias.size}</span></td>
+                                  <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.eventos.length}</span></td>
+                                  <td className="px-3 py-3 text-right">
+                                    <span className={`font-mono text-xs font-bold ${durTextColor(maxEvento?.duracionSegundos ?? 0)}`}>{maxEvento?.duracion || '—'}</span>
+                                    {maxEvento && <p className="text-[10px] text-gray-400">{maxEvento.fecha} {maxEvento.salida}-{maxEvento.entrada}</p>}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Detail table: all excess events */}
+                {desayunoFiltered.length > 0 && (
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <h2 className="text-sm font-bold text-gray-800">Detalle de Todos los Excesos</h2>
+                      <span className="text-xs text-gray-400">{desayunoTotalEventos} registros</span>
+                    </div>
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                        <table className="w-full text-sm">
+                          <thead className="sticky top-0">
+                            <tr className="bg-gray-50 text-left">
+                              <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Fecha</th>
+                              <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+                              <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Empresa</th>
+                              <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Salida</th>
+                              <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Entrada</th>
+                              <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right">Duracion</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {desayunoFiltered.flatMap(emp =>
+                              emp.eventos.map(ev => ({ ...ev, nombre: emp.nombre, empresa: emp.empresa, codigoEmp: emp.codigoEmp }))
+                            ).sort((a, b) => b.duracionSegundos - a.duracionSegundos).map((ev, i) => (
+                              <tr key={i} className="hover:bg-orange-50/20 cursor-pointer" onClick={() => openProfile(ev.codigoEmp)}>
+                                <td className="px-3 py-2 text-gray-600 text-xs">{ev.fecha}</td>
+                                <td className="px-3 py-2">
+                                  <span className="font-semibold text-gray-800 text-xs">{ev.nombre}</span>
+                                </td>
+                                <td className="px-3 py-2 text-gray-500 text-xs">{ev.empresa}</td>
+                                <td className="px-3 py-2 text-center font-mono text-xs text-red-600 font-medium">{ev.salida}</td>
+                                <td className="px-3 py-2 text-center font-mono text-xs text-emerald-600 font-medium">{ev.entrada}</td>
+                                <td className="px-3 py-2 text-right">
+                                  <span className={`font-mono text-xs font-bold ${durTextColor(ev.duracionSegundos)}`}>{ev.duracion}</span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </>
