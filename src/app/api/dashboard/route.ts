@@ -121,7 +121,7 @@ export async function GET() {
       while (i < sorted.length) {
         if (String(sorted[i].terminal ?? '') === 'Salida Depo') {
           const salida = sorted[i];
-          let entrada = null;
+          let entrada: Record<string, unknown> | null = null;
           for (let j = i + 1; j < sorted.length; j++) {
             if (String(sorted[j].terminal ?? '') === 'Entrada Depo') { entrada = sorted[j]; break; }
           }

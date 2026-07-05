@@ -91,18 +91,18 @@ export default function Home() {
   const [profileDateIdx, setProfileDateIdx] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const fetch = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
-    try { const r = await fetch('/api/dashboard'); if (r.ok) setData(await r.json()); }
+    try { const r = await window.fetch('/api/dashboard'); if (r.ok) setData(await r.json()); }
     catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
-  useEffect(() => { fetch(); }, [fetch]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   const upload = async (ep: string, file: File) => {
     setUploading(ep);
     const fd = new FormData(); fd.append('file', file);
-    try { const r = await fetch(ep, { method: 'POST', body: fd }); if (r.ok) fetch(); }
+    try { const r = await window.fetch(ep, { method: 'POST', body: fd }); if (r.ok) fetchData(); }
     catch (e) { console.error(e); }
     finally { setUploading(null); setShowUpload(false); }
   };
@@ -191,7 +191,7 @@ export default function Home() {
               )}
             </div>
             <Button size="sm" className="h-8 bg-red-500 hover:bg-red-600 text-white text-sm"
-              onClick={fetch} disabled={loading}>
+              onClick={fetchData} disabled={loading}>
               <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} /> Actualizar
             </Button>
           </div>
