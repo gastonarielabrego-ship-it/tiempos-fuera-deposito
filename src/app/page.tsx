@@ -193,7 +193,7 @@ export default function Home() {
   }, [data]);
 
   const openProfile = (codigo: number) => {
-    window.open(`/operator/${codigo}`, '_blank');
+    window.location.href = `/operator/${codigo}`;
   };
 
   const totalFueraAll = data?.ranking.reduce((s, e) => s + e.totalFueraSegundos, 0) || 0;
