@@ -163,14 +163,33 @@ export default function Home() {
 
   /* ── Derived data ── */
 
+  // Build map: codigoEmp -> primary turno (most frequent turno across all their days)
+  const empTurnoMap = useMemo(() => {
+    if (!data) return new Map<number, string>();
+    const map = new Map<number, Map<string, number>>();
+    for (const ed of data.employees) {
+      if (!map.has(ed.codigoEmp)) map.set(ed.codigoEmp, new Map());
+      const turnoCounts = map.get(ed.codigoEmp)!;
+      turnoCounts.set(ed.turno, (turnoCounts.get(ed.turno) || 0) + 1);
+    }
+    const result = new Map<number, string>();
+    for (const [codigo, turnoCounts] of map) {
+      let best = 'OTRO', bestCount = 0;
+      for (const [t, c] of turnoCounts) { if (c > bestCount) { best = t; bestCount = c; } }
+      result.set(codigo, best);
+    }
+    return result;
+  }, [data]);
+
   const filteredRanking = useMemo(() => {
     if (!data) return [];
     return data.ranking.filter(e => {
       const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || String(e.codigoEmp).includes(search);
-      const matchTurno = filterTurno === 'all';
+      const empTurno = empTurnoMap.get(e.codigoEmp) || 'OTRO';
+      const matchTurno = filterTurno === 'all' || empTurno === filterTurno;
       return matchSearch && matchTurno;
     });
-  }, [data, search, filterTurno]);
+  }, [data, search, filterTurno, empTurnoMap]);
 
   const filteredTurnoCards = useMemo(() => {
     if (!data) return [];
@@ -366,7 +385,7 @@ export default function Home() {
                         const pos = idx + 1;
                         const rankBadge = pos <= 3 ? 'bg-red-500' : pos <= 7 ? 'bg-orange-400' : '';
                         const rowBg = pos <= 3 ? 'bg-red-50/40' : '';
-                        const empTurno = data.employees.find(e => e.codigoEmp === emp.codigoEmp)?.turno || 'OTRO';
+                        const empTurno = empTurnoMap.get(emp.codigoEmp) || 'OTRO';
                         const tMeta = turnoMeta[empTurno] || turnoMeta.OTRO;
                         const TurnoIcon = tMeta.icon;
 
