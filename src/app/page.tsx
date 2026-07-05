@@ -99,7 +99,7 @@ export default function Home() {
   const [uploading, setUploading] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filterTurno, setFilterTurno] = useState('all');
-  const [activeTab, setActiveTab] = useState<'ranking' | 'desayuno'>('ranking');
+  const [activeTab, setActiveTab] = useState<'ranking' | 'desayuno' | 'break-tarde' | 'break-noche'>('ranking');
   const [showUpload, setShowUpload] = useState(false);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -197,31 +197,23 @@ export default function Home() {
     window.location.href = `/operator/${codigo}`;
   };
 
-  /* ── Exceso Desayuno data ── */
-  // Salida between 06:45 (24300s) and 09:45 (35100s), duration > 25 min (1500s)
-  const DESAYUNO_MIN_SEG = 25 * 60;
-  const DESAYUNO_SALIDA_MIN = 6 * 3600 + 45 * 60;  // 06:45
-  const DESAYUNO_SALIDA_MAX = 9 * 3600 + 45 * 60;  // 09:45
+  /* ── Generic Exceso builder ── */
+  interface ExcesoEntry {
+    codigoEmp: number; nombre: string; empresa: string; sector: string;
+    totalFueraSegundos: number; dias: Set<string>; eventos: { fecha: string; salida: string; entrada: string; duracion: string; duracionSegundos: number }[];
+  }
 
-  const desayunoRanking = useMemo(() => {
+  const buildExcesoRanking = useCallback((salidaMinSeg: number, salidaMaxSeg: number, minDurSeg: number): ExcesoEntry[] => {
     if (!data) return [];
-    // Build aggregated map: codigoEmp -> desayuno excess data
-    const map = new Map<number, {
-      codigoEmp: number; nombre: string; empresa: string; sector: string;
-      totalFueraSegundos: number; dias: Set<string>; eventos: { fecha: string; salida: string; entrada: string; duracion: string; duracionSegundos: number }[];
-    }>();
-
+    const map = new Map<number, ExcesoEntry>();
     for (const emp of data.employees) {
       for (const tf of emp.tiemposFuera) {
         const salidaSeg = timeToS(tf.salida);
-        const inWindow = salidaSeg >= DESAYUNO_SALIDA_MIN && salidaSeg <= DESAYUNO_SALIDA_MAX;
-        const isExcess = tf.duracionSegundos > DESAYUNO_MIN_SEG;
+        const inWindow = salidaSeg >= salidaMinSeg && salidaSeg <= salidaMaxSeg;
+        const isExcess = tf.duracionSegundos > minDurSeg;
         if (inWindow && isExcess) {
           if (!map.has(emp.codigoEmp)) {
-            map.set(emp.codigoEmp, {
-              codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector,
-              totalFueraSegundos: 0, dias: new Set(), eventos: [],
-            });
+            map.set(emp.codigoEmp, { codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector, totalFueraSegundos: 0, dias: new Set(), eventos: [] });
           }
           const entry = map.get(emp.codigoEmp)!;
           entry.totalFueraSegundos += tf.duracionSegundos;
@@ -230,20 +222,32 @@ export default function Home() {
         }
       }
     }
-
     return Array.from(map.values()).sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos);
   }, [data]);
 
-  const desayunoFiltered = useMemo(() => {
-    return desayunoRanking.filter(e => {
-      const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || String(e.codigoEmp).includes(search);
-      return matchSearch;
-    });
-  }, [desayunoRanking, search]);
+  /* ── Exceso Desayuno: 06:45–09:45, >25min ── */
+  const desayunoRanking = useMemo(() => buildExcesoRanking(6*3600+45*60, 9*3600+45*60, 25*60), [buildExcesoRanking]);
+  /* ── Exceso Break Tarde: 16:30–17:30, >15min ── */
+  const breakTardeRanking = useMemo(() => buildExcesoRanking(16*3600+30*60, 17*3600+30*60, 15*60), [buildExcesoRanking]);
+  /* ── Exceso Break Noche: 02:40–03:30, >15min ── */
+  const breakNocheRanking = useMemo(() => buildExcesoRanking(2*3600+40*60, 3*3600+30*60, 15*60), [buildExcesoRanking]);
 
-  const desayunoTotalEventos = desayunoRanking.reduce((s, e) => s + e.eventos.length, 0);
-  const desayunoTotalSegundos = desayunoRanking.reduce((s, e) => s + e.totalFueraSegundos, 0);
-  const desayunoEmpleadosUnicos = desayunoRanking.length;
+  const filterExceso = (list: ExcesoEntry[]) => list.filter(e => {
+    const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || String(e.codigoEmp).includes(search);
+    return matchSearch;
+  });
+  const desayunoFiltered = useMemo(() => filterExceso(desayunoRanking), [desayunoRanking, search]);
+  const breakTardeFiltered = useMemo(() => filterExceso(breakTardeRanking), [breakTardeRanking, search]);
+  const breakNocheFiltered = useMemo(() => filterExceso(breakNocheRanking), [breakNocheRanking, search]);
+
+  const excesoStats = (list: ExcesoEntry[]) => ({
+    totalEventos: list.reduce((s, e) => s + e.eventos.length, 0),
+    totalSegundos: list.reduce((s, e) => s + e.totalFueraSegundos, 0),
+    empleadosUnicos: list.length,
+  });
+  const desayunoStats = useMemo(() => excesoStats(desayunoRanking), [desayunoRanking]);
+  const breakTardeStats = useMemo(() => excesoStats(breakTardeRanking), [breakTardeRanking]);
+  const breakNocheStats = useMemo(() => excesoStats(breakNocheRanking), [breakNocheRanking]);
 
   const totalFueraAll = data?.ranking.reduce((s, e) => s + e.totalFueraSegundos, 0) || 0;
   const maxFuera = data?.ranking[0];
@@ -368,14 +372,22 @@ export default function Home() {
         {hasData && !loading && (
           <>
             {/* ── Tabs ── */}
-            <div className="flex items-center gap-1 border-b border-gray-200">
+            <div className="flex items-center gap-0.5 border-b border-gray-200 overflow-x-auto">
               <button onClick={() => setActiveTab('ranking')}
-                className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors ${activeTab === 'ranking' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'ranking' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
                 Ranking General
               </button>
               <button onClick={() => setActiveTab('desayuno')}
-                className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === 'desayuno' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'desayuno' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
                 <Coffee className="h-3.5 w-3.5" /> Exceso Desayuno
+              </button>
+              <button onClick={() => setActiveTab('break-tarde')}
+                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'break-tarde' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                <Sunset className="h-3.5 w-3.5" /> Break Tarde
+              </button>
+              <button onClick={() => setActiveTab('break-noche')}
+                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'break-noche' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                <Moon className="h-3.5 w-3.5" /> Break Noche
               </button>
             </div>
 
@@ -496,145 +508,44 @@ export default function Home() {
 
             {/* ═══════════ TAB: EXCESO DESAYUNO ═══════════ */}
             {activeTab === 'desayuno' && (
-              <div className="space-y-4 pt-1">
-                {/* Info banner */}
-                <div className="bg-orange-50 border border-orange-200 rounded-lg px-4 py-3 flex items-center gap-3">
-                  <Coffee className="h-5 w-5 text-orange-500 shrink-0" />
-                  <div>
-                    <p className="text-sm font-semibold text-orange-700">Exceso de Desayuno</p>
-                    <p className="text-xs text-orange-500 mt-0.5">Salidas entre 06:45 y 09:45 hs con duracion mayor a 25 minutos</p>
-                  </div>
-                </div>
+              <ExcesoTabContent
+                title="Exceso de Desayuno"
+                description="Salidas entre 06:45 y 09:45 hs con duracion mayor a 25 minutos"
+                icon={<Coffee className="h-5 w-5 text-orange-500 shrink-0" />}
+                iconSmall={<Coffee className="h-4 w-4" />}
+                colorClass="orange"
+                filtered={desayunoFiltered}
+                stats={desayunoStats}
+                openProfile={openProfile}
+              />
+            )}
 
-                {/* Metric cards */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                  <MetricCard icon={<Users className="h-5 w-5 text-orange-500" />} label="Empleados con Exceso" value={String(desayunoEmpleadosUnicos)} accent="border-l-orange-500" />
-                  <MetricCard icon={<Clock className="h-5 w-5 text-red-500" />} label="Suma Excesos" value={formatHMS(desayunoTotalSegundos)} sub={`${desayunoTotalEventos} eventos`} accent="border-l-red-500" subBg="bg-red-50" />
-                  <MetricCard icon={<Coffee className="h-5 w-5 text-amber-500" />} label="Promedio por Empleado" value={desayunoEmpleadosUnicos > 0 ? formatHMS(Math.round(desayunoTotalSegundos / desayunoEmpleadosUnicos)) : '0h 0m 0s'} accent="border-l-amber-500" />
-                  <MetricCard icon={<AlertTriangle className="h-5 w-5 text-red-600" />} label="Mayor Exceso" value={desayunoRanking[0] ? [...desayunoRanking[0].eventos].sort((a, b) => b.duracionSegundos - a.duracionSegundos)[0]?.duracion || '00:00:00' : '00:00:00'} sub={desayunoRanking[0]?.nombre || ''} accent="border-l-red-600" />
-                </div>
+            {/* ═══════════ TAB: BREAK TARDE ═══════════ */}
+            {activeTab === 'break-tarde' && (
+              <ExcesoTabContent
+                title="Exceso Break Tarde"
+                description="Salidas entre 16:30 y 17:30 hs con duracion mayor a 15 minutos"
+                icon={<Sunset className="h-5 w-5 text-purple-500 shrink-0" />}
+                iconSmall={<Sunset className="h-4 w-4" />}
+                colorClass="purple"
+                filtered={breakTardeFiltered}
+                stats={breakTardeStats}
+                openProfile={openProfile}
+              />
+            )}
 
-                {/* Summary bar */}
-                <div className="bg-orange-50 border border-orange-100 rounded-lg px-4 py-2.5 flex items-center gap-6 flex-wrap">
-                  <div className="flex items-center gap-1.5 text-orange-600">
-                    <Coffee className="h-4 w-4" />
-                    <span className="text-xs font-semibold uppercase tracking-wider">Resumen Desayuno</span>
-                  </div>
-                  <span className="text-sm"><b className="text-orange-600">{desayunoTotalEventos}</b> <span className="text-gray-500">excesos</span></span>
-                  <span className="text-sm"><b className="text-orange-600">{formatHMS(desayunoTotalSegundos)}</b> <span className="text-gray-500">suma total</span></span>
-                  <span className="text-sm"><b className="text-orange-600">{desayunoEmpleadosUnicos}</b> <span className="text-gray-500">empleados</span></span>
-                </div>
-
-                {/* Ranking table */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-sm font-bold text-gray-800">Ranking Exceso de Desayuno</h2>
-                    <span className="text-xs text-gray-400">{desayunoFiltered.length} operadores</span>
-                  </div>
-
-                  {desayunoFiltered.length === 0 ? (
-                    <div className="text-center py-12 border border-gray-200 rounded-lg">
-                      <Coffee className="h-12 w-12 mx-auto text-gray-200 mb-3" />
-                      <p className="text-gray-400 text-sm">No hay excesos de desayuno registrados</p>
-                    </div>
-                  ) : (
-                    <div className="border border-gray-200 rounded-lg overflow-hidden">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="bg-orange-50 text-left">
-                              <th className="px-3 py-2.5 text-xs font-semibold text-orange-600 w-12">#</th>
-                              <th className="px-3 py-2.5 text-xs font-semibold text-orange-600">Operador</th>
-                              <th className="px-3 py-2.5 text-xs font-semibold text-orange-600 text-right w-32">T. Exceso Total</th>
-                              <th className="px-3 py-2.5 text-xs font-semibold text-orange-600 text-right w-20">Dias</th>
-                              <th className="px-3 py-2.5 text-xs font-semibold text-orange-600 text-right w-20">Eventos</th>
-                              <th className="px-3 py-2.5 text-xs font-semibold text-orange-600 text-right w-24">Mayor Exceso</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-100">
-                            {desayunoFiltered.map((emp, idx) => {
-                              const pos = idx + 1;
-                              const rankBadge = pos <= 3 ? 'bg-orange-500' : pos <= 7 ? 'bg-amber-400' : '';
-                              const rowBg = pos <= 3 ? 'bg-orange-50/40' : '';
-                              const maxEvento = [...emp.eventos].sort((a, b) => b.duracionSegundos - a.duracionSegundos)[0];
-
-                              return (
-                                <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-orange-50/30 cursor-pointer transition-colors`}
-                                  onClick={() => openProfile(emp.codigoEmp)}>
-                                  <td className="px-3 py-3">
-                                    {rankBadge ? (
-                                      <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
-                                    ) : (
-                                      <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
-                                    )}
-                                  </td>
-                                  <td className="px-3 py-3">
-                                    <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
-                                    <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
-                                  </td>
-                                  <td className="px-3 py-3 text-right">
-                                    <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>{formatHMS(emp.totalFueraSegundos)}</span>
-                                  </td>
-                                  <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.dias.size}</span></td>
-                                  <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.eventos.length}</span></td>
-                                  <td className="px-3 py-3 text-right">
-                                    <span className={`font-mono text-xs font-bold ${durTextColor(maxEvento?.duracionSegundos ?? 0)}`}>{maxEvento?.duracion || '—'}</span>
-                                    {maxEvento && <p className="text-[10px] text-gray-400">{maxEvento.fecha} {maxEvento.salida}-{maxEvento.entrada}</p>}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Detail table: all excess events */}
-                {desayunoFiltered.length > 0 && (
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <h2 className="text-sm font-bold text-gray-800">Detalle de Todos los Excesos</h2>
-                      <span className="text-xs text-gray-400">{desayunoTotalEventos} registros</span>
-                    </div>
-                    <div className="border border-gray-200 rounded-lg overflow-hidden">
-                      <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-                        <table className="w-full text-sm">
-                          <thead className="sticky top-0">
-                            <tr className="bg-gray-50 text-left">
-                              <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Fecha</th>
-                              <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
-                              <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Empresa</th>
-                              <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Salida</th>
-                              <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Entrada</th>
-                              <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right">Duracion</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-100">
-                            {desayunoFiltered.flatMap(emp =>
-                              emp.eventos.map(ev => ({ ...ev, nombre: emp.nombre, empresa: emp.empresa, codigoEmp: emp.codigoEmp }))
-                            ).sort((a, b) => b.duracionSegundos - a.duracionSegundos).map((ev, i) => (
-                              <tr key={i} className="hover:bg-orange-50/20 cursor-pointer" onClick={() => openProfile(ev.codigoEmp)}>
-                                <td className="px-3 py-2 text-gray-600 text-xs">{ev.fecha}</td>
-                                <td className="px-3 py-2">
-                                  <span className="font-semibold text-gray-800 text-xs">{ev.nombre}</span>
-                                </td>
-                                <td className="px-3 py-2 text-gray-500 text-xs">{ev.empresa}</td>
-                                <td className="px-3 py-2 text-center font-mono text-xs text-red-600 font-medium">{ev.salida}</td>
-                                <td className="px-3 py-2 text-center font-mono text-xs text-emerald-600 font-medium">{ev.entrada}</td>
-                                <td className="px-3 py-2 text-right">
-                                  <span className={`font-mono text-xs font-bold ${durTextColor(ev.duracionSegundos)}`}>{ev.duracion}</span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+            {/* ═══════════ TAB: BREAK NOCHE ═══════════ */}
+            {activeTab === 'break-noche' && (
+              <ExcesoTabContent
+                title="Exceso Break Noche"
+                description="Salidas entre 02:40 y 03:30 hs con duracion mayor a 15 minutos"
+                icon={<Moon className="h-5 w-5 text-blue-500 shrink-0" />}
+                iconSmall={<Moon className="h-4 w-4" />}
+                colorClass="blue"
+                filtered={breakNocheFiltered}
+                stats={breakNocheStats}
+                openProfile={openProfile}
+              />
             )}
           </>
         )}
@@ -649,6 +560,177 @@ export default function Home() {
 }
 
 
+
+/* ═══════════════════════════════════════
+   EXCESO TAB CONTENT (reusable)
+   ═══════════════════════════════════════ */
+
+const COLOR_MAP: Record<string, { bg: string; border: string; text: string; badge1: string; badge2: string; rowBg: string; hoverBg: string; headerBg: string }> = {
+  orange: {
+    bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', badge1: 'bg-orange-500', badge2: 'bg-amber-400',
+    rowBg: 'bg-orange-50/40', hoverBg: 'hover:bg-orange-50/30', headerBg: 'bg-orange-50',
+  },
+  purple: {
+    bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', badge1: 'bg-purple-500', badge2: 'bg-purple-300',
+    rowBg: 'bg-purple-50/40', hoverBg: 'hover:bg-purple-50/30', headerBg: 'bg-purple-50',
+  },
+  blue: {
+    bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', badge1: 'bg-blue-500', badge2: 'bg-blue-300',
+    rowBg: 'bg-blue-50/40', hoverBg: 'hover:bg-blue-50/30', headerBg: 'bg-blue-50',
+  },
+};
+
+function ExcesoTabContent({ title, description, icon, iconSmall, colorClass, filtered, stats, openProfile }: {
+  title: string; description: string; icon: React.ReactNode; iconSmall: React.ReactNode;
+  colorClass: string; filtered: { codigoEmp: number; nombre: string; empresa: string; totalFueraSegundos: number; dias: Set<string>; eventos: { fecha: string; salida: string; entrada: string; duracion: string; duracionSegundos: number }[] }[];
+  stats: { totalEventos: number; totalSegundos: number; empleadosUnicos: number };
+  openProfile: (c: number) => void;
+}) {
+  const c = COLOR_MAP[colorClass] || COLOR_MAP.orange;
+  const maxAllEvento = filtered.length > 0
+    ? [...filtered.flatMap(e => e.eventos)].sort((a, b) => b.duracionSegundos - a.duracionSegundos)[0]
+    : null;
+
+  return (
+    <div className="space-y-4 pt-1">
+      {/* Info banner */}
+      <div className={`${c.bg} border ${c.border} rounded-lg px-4 py-3 flex items-center gap-3`}>
+        {icon}
+        <div>
+          <p className={`text-sm font-semibold ${c.text}`}>{title}</p>
+          <p className="text-xs opacity-70 mt-0.5">{description}</p>
+        </div>
+      </div>
+
+      {/* Metric cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <MetricCard icon={<Users className={`h-5 w-5 ${c.text}`} />} label="Empleados con Exceso" value={String(stats.empleadosUnicos)} accent={`border-l-current ${c.text}`} />
+        <MetricCard icon={<Clock className="h-5 w-5 text-red-500" />} label="Suma Excesos" value={formatHMS(stats.totalSegundos)} sub={`${stats.totalEventos} eventos`} accent="border-l-red-500" subBg="bg-red-50" />
+        <MetricCard icon={iconSmall} label="Promedio por Empleado" value={stats.empleadosUnicos > 0 ? formatHMS(Math.round(stats.totalSegundos / stats.empleadosUnicos)) : '0h 0m 0s'} accent={`border-l-amber-500`} />
+        <MetricCard icon={<AlertTriangle className="h-5 w-5 text-red-600" />} label="Mayor Exceso" value={maxAllEvento?.duracion || '00:00:00'} sub={maxAllEvento ? `${filtered.find(e => e.eventos.includes(maxAllEvento))?.nombre || ''} ${maxAllEvento.fecha}` : ''} accent="border-l-red-600" />
+      </div>
+
+      {/* Summary bar */}
+      <div className={`${c.bg} border ${c.border} rounded-lg px-4 py-2.5 flex items-center gap-6 flex-wrap`}>
+        <div className={`flex items-center gap-1.5 ${c.text}`}>
+          {iconSmall}
+          <span className="text-xs font-semibold uppercase tracking-wider">{title}</span>
+        </div>
+        <span className="text-sm"><b className={c.text}>{stats.totalEventos}</b> <span className="text-gray-500">excesos</span></span>
+        <span className="text-sm"><b className={c.text}>{formatHMS(stats.totalSegundos)}</b> <span className="text-gray-500">suma total</span></span>
+        <span className="text-sm"><b className={c.text}>{stats.empleadosUnicos}</b> <span className="text-gray-500">empleados</span></span>
+      </div>
+
+      {/* Ranking table */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-bold text-gray-800">Ranking {title}</h2>
+          <span className="text-xs text-gray-400">{filtered.length} operadores</span>
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="text-center py-12 border border-gray-200 rounded-lg">
+            {iconSmall}
+            <p className="text-gray-400 text-sm mt-2">No hay excesos registrados</p>
+          </div>
+        ) : (
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className={`${c.headerBg} text-left`}>
+                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} w-12`}>#</th>
+                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text}`}>Operador</th>
+                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} text-right w-32`}>T. Exceso Total</th>
+                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} text-right w-20`}>Dias</th>
+                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} text-right w-20`}>Eventos</th>
+                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} text-right w-28`}>Mayor Exceso</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filtered.map((emp, idx) => {
+                    const pos = idx + 1;
+                    const rankBadge = pos <= 3 ? c.badge1 : pos <= 7 ? c.badge2 : '';
+                    const rowBg = pos <= 3 ? c.rowBg : '';
+                    const maxEvento = [...emp.eventos].sort((a, b) => b.duracionSegundos - a.duracionSegundos)[0];
+
+                    return (
+                      <tr key={emp.codigoEmp} className={`${rowBg} ${c.hoverBg} cursor-pointer transition-colors`}
+                        onClick={() => openProfile(emp.codigoEmp)}>
+                        <td className="px-3 py-3">
+                          {rankBadge ? (
+                            <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
+                          ) : (
+                            <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-3">
+                          <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
+                          <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>{formatHMS(emp.totalFueraSegundos)}</span>
+                        </td>
+                        <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.dias.size}</span></td>
+                        <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.eventos.length}</span></td>
+                        <td className="px-3 py-3 text-right">
+                          <span className={`font-mono text-xs font-bold ${durTextColor(maxEvento?.duracionSegundos ?? 0)}`}>{maxEvento?.duracion || '—'}</span>
+                          {maxEvento && <p className="text-[10px] text-gray-400">{maxEvento.fecha} {maxEvento.salida}-{maxEvento.entrada}</p>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Detail table */}
+      {filtered.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-bold text-gray-800">Detalle de Todos los Excesos</h2>
+            <span className="text-xs text-gray-400">{stats.totalEventos} registros</span>
+          </div>
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0">
+                  <tr className="bg-gray-50 text-left">
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Fecha</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Empresa</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Salida</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Entrada</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right">Duracion</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filtered.flatMap(emp =>
+                    emp.eventos.map(ev => ({ ...ev, nombre: emp.nombre, empresa: emp.empresa, codigoEmp: emp.codigoEmp }))
+                  ).sort((a, b) => b.duracionSegundos - a.duracionSegundos).map((ev, i) => (
+                    <tr key={i} className={`${c.hoverBg} cursor-pointer`} onClick={() => openProfile(ev.codigoEmp)}>
+                      <td className="px-3 py-2 text-gray-600 text-xs">{ev.fecha}</td>
+                      <td className="px-3 py-2"><span className="font-semibold text-gray-800 text-xs">{ev.nombre}</span></td>
+                      <td className="px-3 py-2 text-gray-500 text-xs">{ev.empresa}</td>
+                      <td className="px-3 py-2 text-center font-mono text-xs text-red-600 font-medium">{ev.salida}</td>
+                      <td className="px-3 py-2 text-center font-mono text-xs text-emerald-600 font-medium">{ev.entrada}</td>
+                      <td className="px-3 py-2 text-right">
+                        <span className={`font-mono text-xs font-bold ${durTextColor(ev.duracionSegundos)}`}>{ev.duracion}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* ═══════════════════════════════════════
    SUB-COMPONENTS
