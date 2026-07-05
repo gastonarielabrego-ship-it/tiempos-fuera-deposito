@@ -14,15 +14,6 @@ function secondsToTime(totalSec: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function classifyTurno(hora: string): string {
-  const seg = timeToSeconds(hora);
-  const h = seg / 3600;
-  if (h >= 6 && h < 9) return 'TM';
-  if (h >= 10 && h < 14) return 'TT';
-  if (h >= 18) return 'TN';
-  return 'OTRO';
-}
-
 interface TimeOutPair { salida: string; entrada: string; duracionSegundos: number; duracion: string; }
 interface AccesoEvento { hora: string; terminal: string; }
 interface EmployeeDay {
@@ -96,14 +87,12 @@ export async function GET() {
       const sorted = [...records].sort((a, b) => timeToSeconds(String(a.hora ?? '')) - timeToSeconds(String(b.hora ?? '')));
       const first = sorted[0];
 
-      // Determine turno: find the first "Entrada Depo" time
+      // Determine turno from jornada field (contains TM, TT, TN)
+      const jornadaRaw = String(first.jornada ?? '').toUpperCase().trim();
       let turno = 'OTRO';
-      for (const r of sorted) {
-        if (String(r.terminal ?? '') === 'Entrada Depo') {
-          turno = classifyTurno(String(r.hora ?? ''));
-          break;
-        }
-      }
+      if (jornadaRaw.includes('TM')) turno = 'TM';
+      else if (jornadaRaw.includes('TT')) turno = 'TT';
+      else if (jornadaRaw.includes('TN')) turno = 'TN';
 
       const nombreKey = `${String(first.nombre ?? '').toUpperCase()}|${first.fecha}`;
       const comidasHoras = mealMap.get(nombreKey) || [];
