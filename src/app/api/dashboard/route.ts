@@ -36,8 +36,9 @@ interface RankingEntry {
   codigoEmp: number; nombre: string; empresa: string; sector: string;
   totalFueraSegundos: number; totalFuera: string;
   diasCount: number; avgPorDia: string; maxDiaFuera: string; maxDiaFecha: string;
+  eventosCount: number;
 }
-interface TurnoRanking { turno: string; label: string; empleados: RankingEntry[]; }
+interface TurnoRanking { turno: string; label: string; totalFueraSegundos: number; totalFuera: string; eventosCount: number; empleados: RankingEntry[]; }
 
 export async function GET() {
   try {
@@ -161,7 +162,7 @@ export async function GET() {
     const turnoRankingMap = new Map<string, Map<number, {
       codigoEmp: number; nombre: string; empresa: string; sector: string;
       totalFueraSegundos: number; dias: Set<string>; diasConFuera: number[];
-      maxDia: { seg: number; fecha: string };
+      maxDia: { seg: number; fecha: string }; eventosCount: number;
     }>>();
 
     for (const emp of employees) {
@@ -173,12 +174,13 @@ export async function GET() {
         turnoMap.set(emp.codigoEmp, {
           codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector,
           totalFueraSegundos: 0, dias: new Set(), diasConFuera: [],
-          maxDia: { seg: 0, fecha: '' },
+          maxDia: { seg: 0, fecha: '' }, eventosCount: 0,
         });
       }
       const entry = turnoMap.get(emp.codigoEmp)!;
       entry.totalFueraSegundos += emp.totalFueraSegundos;
       entry.dias.add(emp.fecha);
+      entry.eventosCount += emp.tiemposFuera.length;
       if (emp.totalFueraSegundos > 0) entry.diasConFuera.push(emp.totalFueraSegundos);
       if (emp.totalFueraSegundos > entry.maxDia.seg) {
         entry.maxDia = { seg: emp.totalFueraSegundos, fecha: emp.fecha };
@@ -199,24 +201,28 @@ export async function GET() {
             diasCount: r.dias.size,
             avgPorDia: r.diasConFuera.length > 0 ? secondsToTime(Math.round(r.totalFueraSegundos / r.diasConFuera.length)) : '00:00:00',
             maxDiaFuera: secondsToTime(r.maxDia.seg), maxDiaFecha: r.maxDia.fecha,
+            eventosCount: r.eventosCount,
           }))
           .sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos);
-        return { turno: t, label: turnoLabels[t], empleados };
+        const totalFuera = empleados.reduce((s, e) => s + e.totalFueraSegundos, 0);
+        const totalEventos = empleados.reduce((s, e) => s + e.eventosCount, 0);
+        return { turno: t, label: turnoLabels[t], totalFueraSegundos: totalFuera, totalFuera: secondsToTime(totalFuera), eventosCount: totalEventos, empleados };
       });
 
     // Also build a flat ranking (all turnos combined)
     const allRankingMap = new Map<number, {
       codigoEmp: number; nombre: string; empresa: string; sector: string;
       totalFueraSegundos: number; dias: Set<string>; diasConFuera: number[];
-      maxDia: { seg: number; fecha: string };
+      maxDia: { seg: number; fecha: string }; eventosCount: number;
     }>();
     for (const [, turnoMap] of turnoRankingMap) {
       for (const [, v] of turnoMap) {
         if (!allRankingMap.has(v.codigoEmp)) {
-          allRankingMap.set(v.codigoEmp, { ...v, dias: new Set(v.dias), diasConFuera: [...v.diasConFuera] });
+          allRankingMap.set(v.codigoEmp, { ...v, dias: new Set(v.dias), diasConFuera: [...v.diasConFuera], eventosCount: v.eventosCount });
         } else {
           const existing = allRankingMap.get(v.codigoEmp)!;
           existing.totalFueraSegundos += v.totalFueraSegundos;
+          existing.eventosCount += v.eventosCount;
           for (const d of v.dias) existing.dias.add(d);
           existing.diasConFuera.push(...v.diasConFuera);
           if (v.maxDia.seg > existing.maxDia.seg) existing.maxDia = v.maxDia;
@@ -231,6 +237,7 @@ export async function GET() {
         diasCount: r.dias.size,
         avgPorDia: r.diasConFuera.length > 0 ? secondsToTime(Math.round(r.totalFueraSegundos / r.diasConFuera.length)) : '00:00:00',
         maxDiaFuera: secondsToTime(r.maxDia.seg), maxDiaFecha: r.maxDia.fecha,
+        eventosCount: r.eventosCount,
       }))
       .sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos);
 
