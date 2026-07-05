@@ -4,14 +4,11 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ScrollArea } from '@/components/ui/scroll-area';
+
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
-} from '@/components/ui/dialog';
-import {
-  Upload, RefreshCw, Clock, Users, UtensilsCrossed, ScanFace,
+  Upload, RefreshCw, Clock, Users,
   FileSpreadsheet, Search, Sun, Sunset, Moon,
-  ArrowUpFromLine, ArrowDownToLine, AlertTriangle, CheckCircle2, XCircle,
+  AlertTriangle, CheckCircle2, XCircle,
 } from 'lucide-react';
 
 /* ═══════════════════════════════════════
@@ -102,10 +99,8 @@ export default function Home() {
   const [uploading, setUploading] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filterTurno, setFilterTurno] = useState('all');
-  const [filterDate, setFilterDate] = useState('all');
   const [showUpload, setShowUpload] = useState(false);
-  const [profileEmp, setProfileEmp] = useState<EmployeeDay | null>(null);
-  const [profileDateIdx, setProfileDateIdx] = useState(0);
+
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const fileInputsRef = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -197,20 +192,8 @@ export default function Home() {
     return data.rankingPorTurno.filter(tr => tr.empleados.length > 0);
   }, [data]);
 
-  const empDays = useMemo(() => {
-    if (!profileEmp || !data) return [];
-    return data.employees
-      .filter(e => e.codigoEmp === profileEmp.codigoEmp)
-      .filter(e => filterDate === 'all' || e.fecha === filterDate)
-      .sort((a, b) => b.fecha.localeCompare(a.fecha));
-  }, [profileEmp, data, filterDate]);
-
-  const profileDay = empDays[profileDateIdx] || null;
-
   const openProfile = (codigo: number) => {
-    if (!data) return;
-    const emp = data.employees.find(e => e.codigoEmp === codigo);
-    if (emp) { setProfileEmp(emp); setProfileDateIdx(0); }
+    window.open(`/operator/${codigo}`, '_blank');
   };
 
   const totalFueraAll = data?.ranking.reduce((s, e) => s + e.totalFueraSegundos, 0) || 0;
@@ -236,11 +219,6 @@ export default function Home() {
               className="h-8 text-sm border border-gray-300 rounded-md px-2 bg-white text-gray-600 focus:outline-none">
               <option value="all">Turno: Todos</option>
               {data?.turnos.map(t => <option key={t} value={t}>{t} — {turnoMeta[t]?.label || t}</option>)}
-            </select>
-            <select value={filterDate} onChange={e => setFilterDate(e.target.value)}
-              className="h-8 text-sm border border-gray-300 rounded-md px-2 bg-white text-gray-600 focus:outline-none">
-              <option value="all">Fecha: Todas</option>
-              {data?.summary.dates.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
             <Button variant="outline" size="sm" className="h-8 text-sm border-gray-300 text-gray-600"
               onClick={() => setShowUpload(!showUpload)}>
@@ -453,66 +431,7 @@ export default function Home() {
         )}
       </main>
 
-      {/* ═══════════ PROFILE DIALOG ═══════════ */}
-      <Dialog open={profileEmp !== null} onOpenChange={o => { if (!o) setProfileEmp(null); }}>
-        <DialogContent className="sm:max-w-4xl max-h-[90vh] p-0 overflow-hidden flex flex-col">
-          {profileEmp && (
-            <div className="bg-white border-b border-gray-200 px-6 py-4 shrink-0">
-              <div className="flex items-center justify-between">
-                <div>
-                  <DialogTitle className="text-base font-bold text-gray-800">OPERADOR: {profileEmp.nombre}</DialogTitle>
-                  <DialogDescription className="text-xs text-gray-400 mt-0.5">
-                    Codigo {profileEmp.codigoEmp} &middot; {profileEmp.empresa} &middot; {profileEmp.sector}
-                  </DialogDescription>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-gray-400">{empDays.reduce((s, d) => s + d.tiemposFuera.length, 0)} salidas</span>
-                  <span className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full ${(turnoMeta[profileEmp.turno] || DEFAULT_TURNO_META).bg} ${(turnoMeta[profileEmp.turno] || DEFAULT_TURNO_META).text}`}>
-                    {(() => { const TIcon = (turnoMeta[profileEmp.turno] || DEFAULT_TURNO_META).icon; return <TIcon className="h-3 w-3" />; })()}
-                    {profileEmp.turno}
-                  </span>
-                </div>
-              </div>
-              <div className="flex gap-1 mt-3 overflow-x-auto pb-1">
-                {empDays.map((d, i) => (
-                  <button key={d.fecha} onClick={() => setProfileDateIdx(i)}
-                    className={`px-3 py-1.5 rounded text-xs font-medium whitespace-nowrap transition-colors ${profileDateIdx === i ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                    {d.fecha}
-                    {d.totalFueraSegundos > 0 && <span className="ml-1 opacity-70">({d.totalFuera})</span>}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
 
-          {profileDay && (
-            <ScrollArea className="flex-1">
-              <div className="p-6 space-y-5">
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="bg-gray-50 rounded-lg p-3 text-center">
-                    <p className="text-[10px] text-gray-400 uppercase">Jornada</p>
-                    <p className="text-sm font-semibold text-gray-700 mt-0.5">{profileDay.jornada || '—'}</p>
-                  </div>
-                  <div className="bg-gray-50 rounded-lg p-3 text-center">
-                    <p className="text-[10px] text-gray-400 uppercase">Total Fuera</p>
-                    <p className={`text-sm font-bold font-mono mt-0.5 ${durTextColor(profileDay.totalFueraSegundos)}`}>{profileDay.totalFuera}</p>
-                  </div>
-                  <div className="bg-gray-50 rounded-lg p-3 text-center">
-                    <p className="text-[10px] text-gray-400 uppercase">Salidas</p>
-                    <p className="text-sm font-bold text-gray-700 mt-0.5">{profileDay.tiemposFuera.length}</p>
-                  </div>
-                </div>
-
-                {/* All movements - unified table */}
-                <div>
-                  <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Todos los Movimientos</h3>
-                  <UnifiedMovements day={profileDay} />
-                </div>
-              </div>
-            </ScrollArea>
-          )}
-        </DialogContent>
-      </Dialog>
 
       {/* Toast notification */}
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
@@ -520,101 +439,7 @@ export default function Home() {
   );
 }
 
-/* Unified movements table: accesos + facial + comidas sorted by time */
-interface UnifiedEvent {
-  hora: string; seg: number; tipo: 'entrada' | 'salida' | 'facial' | 'comida' | 'otro';
-  label: string; duracion?: string; duracionSeg?: number;
-}
 
-function UnifiedMovements({ day }: { day: EmployeeDay }) {
-  const events = useMemo(() => {
-    const list: UnifiedEvent[] = [];
-
-    // Access events
-    for (const ev of day.accesosEventos) {
-      const seg = timeToS(ev.hora);
-      if (ev.terminal === 'Entrada Depo') {
-        const paired = day.tiemposFuera.find(t => t.entrada === ev.hora);
-        list.push({
-          hora: ev.hora, seg, tipo: 'entrada', label: 'Entrada Depo',
-          duracion: paired?.duracion, duracionSeg: paired?.duracionSegundos,
-        });
-      } else if (ev.terminal === 'Salida Depo') {
-        list.push({ hora: ev.hora, seg, tipo: 'salida', label: 'Salida Depo' });
-      } else {
-        list.push({ hora: ev.hora, seg, tipo: 'otro', label: ev.terminal });
-      }
-    }
-
-    // Facial events
-    for (const f of day.facialRegistros) {
-      list.push({ hora: f.hora, seg: timeToS(f.hora), tipo: 'facial', label: f.zona || 'Facial' });
-    }
-
-    // Comida events
-    for (const h of day.comidasHoras) {
-      list.push({ hora: h, seg: timeToS(h), tipo: 'comida', label: 'TK Comida' });
-    }
-
-    return list.sort((a, b) => a.seg - b.seg);
-  }, [day]);
-
-  if (events.length === 0) return <p className="text-sm text-gray-300 italic">Sin movimientos registrados</p>;
-
-  const styleMap: Record<string, { bg: string; icon: typeof ArrowDownToLine }> = {
-    entrada: { bg: 'bg-emerald-100 text-emerald-700', icon: ArrowDownToLine },
-    salida:  { bg: 'bg-red-100 text-red-700', icon: ArrowUpFromLine },
-    facial:  { bg: 'bg-blue-100 text-blue-700', icon: ScanFace },
-    comida:  { bg: 'bg-orange-100 text-orange-700', icon: UtensilsCrossed },
-    otro:    { bg: 'bg-gray-100 text-gray-600', icon: Clock },
-  };
-
-  return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-gray-50">
-            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-left w-10">#</th>
-            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-center">Hora</th>
-            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-left">Evento</th>
-            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-right">Tiempo Fuera</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
-          {events.map((ev, i) => {
-            const s = styleMap[ev.tipo] || styleMap.otro;
-            const Icon = s.icon;
-            return (
-              <tr key={i} className={ev.tipo === 'salida' ? 'bg-red-50/30' : ev.tipo === 'entrada' ? 'bg-emerald-50/30' : ''}>
-                <td className="px-3 py-2">
-                  <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-200 text-gray-600 text-[10px] font-bold">{i + 1}</span>
-                </td>
-                <td className="px-3 py-2 text-center">
-                  <span className="font-mono text-xs font-medium text-gray-700">{ev.hora}</span>
-                </td>
-                <td className="px-3 py-2">
-                  <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${s.bg}`}>
-                    <Icon className="h-3 w-3" />
-                    {ev.label}
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-right">
-                  {ev.duracion ? (
-                    <span className={`inline-block px-2 py-0.5 rounded font-mono text-xs font-bold ${durTextColor(ev.duracionSeg ?? 0)}`}>
-                      {ev.duracion}
-                    </span>
-                  ) : (
-                    <span className="text-gray-300">—</span>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 /* ═══════════════════════════════════════
    SUB-COMPONENTS

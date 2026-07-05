@@ -1,0 +1,639 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+     4→import { Button } from '@/components/ui/button';
+     5→import { Input } from '@/components/ui/input';
+     6→import { Skeleton } from '@/components/ui/skeleton';
+     7→import { ScrollArea } from '@/components/ui/scroll-area';
+     8→import {
+     9→  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+    10→} from '@/components/ui/dialog';
+    11→import {
+    12→  Upload, RefreshCw, Clock, Users, UtensilsCrossed, ScanFace,
+    13→  FileSpreadsheet, Search, Sun, Sunset, Moon,
+    14→  ArrowUpFromLine, ArrowDownToLine, AlertTriangle, CheckCircle2, XCircle,
+    15→} from 'lucide-react';
+    16→
+    17→/* ═══════════════════════════════════════
+    18→   TYPES
+    19→   ═══════════════════════════════════════ */
+    20→
+    21→interface TimeOutPair { salida: string; entrada: string; duracionSegundos: number; duracion: string; }
+    22→interface AccesoEvento { hora: string; terminal: string; }
+    23→
+    24→interface EmployeeDay {
+    25→  codigoEmp: number; nombre: string; fecha: string; jornada: string; sector: string; empresa: string;
+    26→  turno: string; tiemposFuera: TimeOutPair[]; totalFueraSegundos: number; totalFuera: string;
+    27→  comidasHoras: string[]; facialRegistros: { hora: string; zona: string }[];
+    28→  accesosEventos: AccesoEvento[];
+    29→}
+    30→
+    31→interface RankingEntry {
+    32→  codigoEmp: number; nombre: string; empresa: string; sector: string;
+    33→  totalFueraSegundos: number; totalFuera: string;
+    34→  diasCount: number; avgPorDia: string; maxDiaFuera: string; maxDiaFecha: string;
+    35→  eventosCount: number;
+    36→}
+    37→
+    38→interface TurnoRanking { turno: string; label: string; totalFueraSegundos: number; totalFuera: string; eventosCount: number; empleados: RankingEntry[]; }
+    39→
+    40→interface Summary {
+    41→  totalEmployees: number; totalRecords: number; totalComidas: number;
+    42→  totalFacial: number; avgOutsidePerEmployee: string; dates: string[];
+    43→}
+    44→
+    45→interface DashboardData {
+    46→  employees: EmployeeDay[]; ranking: RankingEntry[];
+    47→  rankingPorTurno: TurnoRanking[]; turnos: string[]; summary: Summary;
+    48→}
+    49→
+    50→/* ═══════════════════════════════════════
+    51→   HELPERS
+    52→   ═══════════════════════════════════════ */
+    53→
+    54→const timeToS = (t: string) => {
+    55→  if (!t) return 0;
+    56→  const p = t.split(':');
+    57→  return (Number(p[0]) || 0) * 3600 + (Number(p[1]) || 0) * 60 + (Number(p[2]) || 0);
+    58→};
+    59→
+    60→const formatHMS = (s: number) => {
+    61→  const h = Math.floor(s / 3600);
+    62→  const m = Math.floor((s % 3600) / 60);
+    63→  const sec = s % 60;
+    64→  return `${h}h ${m}m ${sec}s`;
+    65→};
+    66→
+    67→const durTextColor = (s: number) => s <= 1800 ? 'text-emerald-600' : s <= 3600 ? 'text-amber-600' : 'text-red-600';
+    68→
+    69→const turnoMeta: Record<string, { label: string; icon: typeof Sun; bg: string; text: string; border: string }> = {
+    70→  TM: { label: 'Mañana', icon: Sun, bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+    71→  TT: { label: 'Tarde', icon: Sunset, bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200' },
+    72→  TN: { label: 'Noche', icon: Moon, bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+    73→};
+    74→
+    75→const DEFAULT_TURNO_META = { label: '—', icon: Clock, bg: 'bg-gray-50', text: 'text-gray-400', border: 'border-gray-200' };
+    76→
+    77→/* ═══════════════════════════════════════
+    78→   TOAST NOTIFICATION
+    79→   ═══════════════════════════════════════ */
+    80→
+    81→function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
+    82→  useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
+    83→  const Icon = type === 'success' ? CheckCircle2 : XCircle;
+    84→  const bg = type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700';
+    85→  return (
+    86→    <div className={`fixed bottom-4 right-4 z-[100] flex items-center gap-2 px-4 py-3 rounded-lg border shadow-lg text-sm font-medium animate-in slide-in-from-bottom-2 ${bg}`}>
+    87→      <Icon className="h-4 w-4 shrink-0" />
+    88→      <span>{message}</span>
+    89→      <button onClick={onClose} className="ml-2 opacity-50 hover:opacity-100"><XCircle className="h-3.5 w-3.5" /></button>
+    90→    </div>
+    91→  );
+    92→}
+    93→
+    94→/* ═══════════════════════════════════════
+    95→   MAIN PAGE
+    96→   ═══════════════════════════════════════ */
+    97→
+    98→export default function Home() {
+    99→  const [data, setData] = useState<DashboardData | null>(null);
+   100→  const [loading, setLoading] = useState(true);
+   101→  const [error, setError] = useState<string | null>(null);
+   102→  const [uploading, setUploading] = useState<string | null>(null);
+   103→  const [search, setSearch] = useState('');
+   104→  const [filterTurno, setFilterTurno] = useState('all');
+   105→  const [filterDate, setFilterDate] = useState('all');
+   106→  const [showUpload, setShowUpload] = useState(false);
+   107→  const [profileEmp, setProfileEmp] = useState<EmployeeDay | null>(null);
+   108→  const [profileDateIdx, setProfileDateIdx] = useState(0);
+   109→  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+   110→  const fileInputsRef = useRef<Record<string, HTMLInputElement | null>>({});
+   111→
+   112→  const showToast = useCallback((message: string, type: 'success' | 'error') => {
+   113→    setToast({ message, type });
+   114→  }, []);
+   115→
+   116→  const fetchData = useCallback(async () => {
+   117→    setLoading(true);
+   118→    setError(null);
+   119→    try {
+   120→      const r = await window.fetch('/api/dashboard');
+   121→      if (r.ok) {
+   122→        const json = await r.json();
+   123→        setData(json);
+   124→        if (json.error) setError(json.error);
+   125→      } else {
+   126→        const text = await r.text().catch(() => 'Error desconocido');
+   127→        setError(`Error del servidor (${r.status}): ${text}`);
+   128→      }
+   129→    } catch (e) {
+   130→      const msg = e instanceof Error ? e.message : 'Error de conexión';
+   131→      setError(msg);
+   132→    } finally {
+   133→      setLoading(false);
+   134→    }
+   135→  }, []);
+   136→
+   137→  useEffect(() => { fetchData(); }, [fetchData]);
+   138→
+   139→  const upload = async (ep: string, label: string, file: File) => {
+   140→    setUploading(ep);
+   141→    setShowUpload(false);
+   142→    try {
+   143→      const fd = new FormData();
+   144→      fd.append('file', file);
+   145→      const r = await window.fetch(ep, { method: 'POST', body: fd });
+   146→      if (r.ok) {
+   147→        const json = await r.json().catch(() => null);
+   148→        showToast(`${label}: ${json?.count ?? 0} registros cargados`, 'success');
+   149→        await fetchData();
+   150→      } else {
+   151→        const text = await r.text().catch(() => 'Error desconocido');
+   152→        showToast(`${label}: ${text}`, 'error');
+   153→      }
+   154→    } catch (e) {
+   155→      showToast(`${label}: Error de conexión`, 'error');
+   156→    } finally {
+   157→      setUploading(null);
+   158→    }
+   159→  };
+   160→
+   161→  const triggerFileInput = (ep: string) => {
+   162→    fileInputsRef.current[ep]?.click();
+   163→  };
+   164→
+   165→  /* ── Derived data ── */
+   166→
+   167→  // Build map: codigoEmp -> primary turno (most frequent turno across all their days)
+   168→  const empTurnoMap = useMemo(() => {
+   169→    if (!data) return new Map<number, string>();
+   170→    const map = new Map<number, Map<string, number>>();
+   171→    for (const ed of data.employees) {
+   172→      if (!map.has(ed.codigoEmp)) map.set(ed.codigoEmp, new Map());
+   173→      const turnoCounts = map.get(ed.codigoEmp)!;
+   174→      turnoCounts.set(ed.turno, (turnoCounts.get(ed.turno) || 0) + 1);
+   175→    }
+   176→    const result = new Map<number, string>();
+   177→    for (const [codigo, turnoCounts] of map) {
+   178→      let best = 'OTRO', bestCount = 0;
+   179→      for (const [t, c] of turnoCounts) { if (c > bestCount) { best = t; bestCount = c; } }
+   180→      result.set(codigo, best);
+   181→    }
+   182→    return result;
+   183→  }, [data]);
+   184→
+   185→  const filteredRanking = useMemo(() => {
+   186→    if (!data) return [];
+   187→    return data.ranking.filter(e => {
+   188→      const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || String(e.codigoEmp).includes(search);
+   189→      const empTurno = empTurnoMap.get(e.codigoEmp) || 'OTRO';
+   190→      const matchTurno = filterTurno === 'all' || empTurno === filterTurno;
+   191→      return matchSearch && matchTurno;
+   192→    });
+   193→  }, [data, search, filterTurno, empTurnoMap]);
+   194→
+   195→  const filteredTurnoCards = useMemo(() => {
+   196→    if (!data) return [];
+   197→    return data.rankingPorTurno.filter(tr => tr.empleados.length > 0);
+   198→  }, [data]);
+   199→
+   200→  const empDays = useMemo(() => {
+   201→    if (!profileEmp || !data) return [];
+   202→    return data.employees
+   203→      .filter(e => e.codigoEmp === profileEmp.codigoEmp)
+   204→      .filter(e => filterDate === 'all' || e.fecha === filterDate)
+   205→      .sort((a, b) => b.fecha.localeCompare(a.fecha));
+   206→  }, [profileEmp, data, filterDate]);
+   207→
+   208→  const profileDay = empDays[profileDateIdx] || null;
+   209→
+   210→  const openProfile = (codigo: number) => {
+   211→    if (!data) return;
+   212→    const emp = data.employees.find(e => e.codigoEmp === codigo);
+   213→    if (emp) { setProfileEmp(emp); setProfileDateIdx(0); }
+   214→  };
+   215→
+   216→  const totalFueraAll = data?.ranking.reduce((s, e) => s + e.totalFueraSegundos, 0) || 0;
+   217→  const maxFuera = data?.ranking[0];
+   218→  const totalEventos = data?.employees.reduce((s, e) => s + e.tiemposFuera.length, 0) || 0;
+   219→
+   220→  const hasData = data && data.employees.length > 0;
+   221→  const isEmpty = data && data.employees.length === 0 && !error;
+   222→
+   223→  return (
+   224→    <div className="min-h-screen bg-white flex flex-col">
+   225→      {/* ═══════════ HEADER ═══════════ */}
+   226→      <header className="border-b border-gray-200 bg-white sticky top-0 z-50">
+   227→        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+   228→          <h1 className="text-base sm:text-lg font-bold text-gray-800 whitespace-nowrap">Tiempos Fuera de Deposito</h1>
+   229→          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
+   230→            <div className="relative">
+   231→              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+   232→              <Input placeholder="Buscar operador..." value={search} onChange={e => setSearch(e.target.value)}
+   233→                className="pl-8 h-8 w-40 sm:w-52 text-sm border-gray-300" />
+   234→            </div>
+   235→            <select value={filterTurno} onChange={e => setFilterTurno(e.target.value)}
+   236→              className="h-8 text-sm border border-gray-300 rounded-md px-2 bg-white text-gray-600 focus:outline-none">
+   237→              <option value="all">Turno: Todos</option>
+   238→              {data?.turnos.map(t => <option key={t} value={t}>{t} — {turnoMeta[t]?.label || t}</option>)}
+   239→            </select>
+   240→            <select value={filterDate} onChange={e => setFilterDate(e.target.value)}
+   241→              className="h-8 text-sm border border-gray-300 rounded-md px-2 bg-white text-gray-600 focus:outline-none">
+   242→              <option value="all">Fecha: Todas</option>
+   243→              {data?.summary.dates.map(d => <option key={d} value={d}>{d}</option>)}
+   244→            </select>
+   245→            <Button variant="outline" size="sm" className="h-8 text-sm border-gray-300 text-gray-600"
+   246→              onClick={() => setShowUpload(!showUpload)}>
+   247→              <Upload className="h-3.5 w-3.5 mr-1" /> Cargar
+   248→            </Button>
+   249→            <Button size="sm" className="h-8 bg-red-500 hover:bg-red-600 text-white text-sm"
+   250→              onClick={fetchData} disabled={loading}>
+   251→              <RefreshCw className={`h-3.5 w-3.5 mr-1 ${loading ? 'animate-spin' : ''}`} /> Actualizar
+   252→            </Button>
+   253→          </div>
+   254→        </div>
+   255→
+   256→        {/* Upload dropdown */}
+   257→        {showUpload && (
+   258→          <div className="border-t border-gray-100 bg-gray-50 px-4 sm:px-6 py-3">
+   259→            <div className="max-w-7xl mx-auto flex items-center gap-3 flex-wrap">
+   260→              <span className="text-xs text-gray-500 font-medium">Cargar archivo:</span>
+   261→              {[
+   262→                { label: 'Accesos', ep: '/api/upload-accesos' },
+   263→                { label: 'Comidas (TK)', ep: '/api/upload-comidas' },
+   264→                { label: 'Facial', ep: '/api/upload-facial' },
+   265→              ].map(({ label, ep }) => (
+   266→                <Button key={ep} variant="outline" size="sm" className="h-8 text-xs border-gray-300 text-gray-600"
+   267→                  disabled={uploading !== null}
+   268→                  onClick={() => triggerFileInput(ep)}>
+   269→                  {uploading === ep ? (
+   270→                    <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
+   271→                  ) : (
+   272→                    <FileSpreadsheet className="h-3 w-3 mr-1.5 text-gray-400" />
+   273→                  )}
+   274→                  {label}
+   275→                </Button>
+   276→              ))}
+   277→              <input
+   278→                key="/api/upload-accesos"
+   279→                ref={el => { fileInputsRef.current['/api/upload-accesos'] = el; }}
+   280→                type="file" accept=".xlsx,.xls" className="hidden"
+   281→                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-accesos', 'Accesos', f); e.target.value = ''; }} />
+   282→              <input
+   283→                key="/api/upload-comidas"
+   284→                ref={el => { fileInputsRef.current['/api/upload-comidas'] = el; }}
+   285→                type="file" accept=".xlsx,.xls" className="hidden"
+   286→                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-comidas', 'Comidas', f); e.target.value = ''; }} />
+   287→              <input
+   288→                key="/api/upload-facial"
+   289→                ref={el => { fileInputsRef.current['/api/upload-facial'] = el; }}
+   290→                type="file" accept=".xlsx,.xls" className="hidden"
+   291→                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-facial', 'Facial', f); e.target.value = ''; }} />
+   292→              <span className="text-[10px] text-gray-400 ml-2">Se sobreescribe con cada carga</span>
+   293→            </div>
+   294→          </div>
+   295→        )}
+   296→      </header>
+   297→
+   298→      {/* ═══════════ MAIN ═══════════ */}
+   299→      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-5 space-y-4">
+   300→
+   301→        {/* ── Error state ── */}
+   302→        {error && !loading && (
+   303→          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+   304→            <XCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+   305→            <div>
+   306→              <p className="text-sm font-semibold text-red-700">Error de conexión con la base de datos</p>
+   307→              <p className="text-xs text-red-500 mt-1">{error}</p>
+   308→              <p className="text-xs text-red-400 mt-2">Verificá que la variable DATABASE_URL esté configurada en Vercel.</p>
+   309→            </div>
+   310→          </div>
+   311→        )}
+   312→
+   313→        {/* ── Loading ── */}
+   314→        {loading && !error && (
+   315→          <div className="space-y-3">
+   316→            <Skeleton className="h-4 w-48" />
+   317→            <Skeleton className="h-10 w-full" />
+   318→            <Skeleton className="h-10 w-full" />
+   319→            <Skeleton className="h-10 w-full" />
+   320→          </div>
+   321→        )}
+   322→
+   323→        {/* ── Empty state (no data yet) ── */}
+   324→        {isEmpty && (
+   325→          <div className="text-center py-20">
+   326→            <FileSpreadsheet className="h-16 w-16 mx-auto text-gray-200 mb-4" />
+   327→            <p className="text-gray-500 text-base font-medium">No hay datos cargados</p>
+   328→            <p className="text-gray-400 text-sm mt-1">Usá el botón &quot;Cargar&quot; de arriba para subir los archivos Excel</p>
+   329→            <div className="flex items-center justify-center gap-2 mt-4">
+   330→              <Button variant="outline" size="sm" onClick={() => triggerFileInput('/api/upload-accesos')}
+   331→                className="text-sm">
+   332→                <FileSpreadsheet className="h-4 w-4 mr-2" /> Cargar Accesos
+   333→              </Button>
+   334→            </div>
+   335→          </div>
+   336→        )}
+   337→
+   338→        {/* ══════════════════════════════════════
+   339→            CONTENT (has data)
+   340→            ══════════════════════════════════════ */}
+   341→        {hasData && !loading && (
+   342→          <>
+   343→            {/* ── Metric Cards ── */}
+   344→            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+   345→              <MetricCard icon={<Users className="h-5 w-5 text-blue-500" />} label="Total Empleados" value={String(data.summary.totalEmployees)} accent="border-l-blue-500" />
+   346→              <MetricCard icon={<Clock className="h-5 w-5 text-red-500" />} label="Suma Tiempos Fuera" value={formatHMS(totalFueraAll)} sub={`${totalEventos} eventos`} accent="border-l-red-500" subBg="bg-red-50" />
+   347→              <MetricCard icon={<AlertTriangle className="h-5 w-5 text-amber-500" />} label="Promedio por Empleado" value={data.summary.avgOutsidePerEmployee} accent="border-l-amber-500" />
+   348→              <MetricCard icon={<Clock className="h-5 w-5 text-orange-500" />} label="Mayor Tiempo Fuera" value={maxFuera ? maxFuera.totalFuera : '00:00:00'} sub={maxFuera ? maxFuera.nombre : ''} accent="border-l-orange-500" />
+   349→            </div>
+   350→
+   351→            {/* ── Summary bar ── */}
+   352→            <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-2.5 flex items-center gap-6 flex-wrap">
+   353→              <div className="flex items-center gap-1.5 text-red-600">
+   354→                <AlertTriangle className="h-4 w-4" />
+   355→                <span className="text-xs font-semibold uppercase tracking-wider">Resumen</span>
+   356→              </div>
+   357→              <span className="text-sm"><b className="text-red-600">{totalEventos}</b> <span className="text-gray-500">salidas</span></span>
+   358→              <span className="text-sm"><b className="text-red-600">{formatHMS(totalFueraAll)}</b> <span className="text-gray-500">suma total</span></span>
+   359→              <span className="text-sm"><b className="text-red-600">{data.summary.totalEmployees}</b> <span className="text-gray-500">empleados</span></span>
+   360→            </div>
+   361→
+   362→            {/* ── Ranking table ── */}
+   363→            <div>
+   364→              <div className="flex items-center justify-between mb-3">
+   365→                <h2 className="text-sm font-bold text-gray-800">Ranking por Tiempo Fuera de Deposito</h2>
+   366→                <span className="text-xs text-gray-400">{filteredRanking.length} operadores</span>
+   367→              </div>
+   368→
+   369→              <div className="border border-gray-200 rounded-lg overflow-hidden">
+   370→                <div className="overflow-x-auto">
+   371→                  <table className="w-full text-sm">
+   372→                    <thead>
+   373→                      <tr className="bg-gray-50 text-left">
+   374→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
+   375→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+   376→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-20">Turno</th>
+   377→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-32">T. Fuera Deposito</th>
+   378→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Prom/Dia</th>
+   379→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Dias</th>
+   380→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Mayor Dia</th>
+   381→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-16">Eventos</th>
+   382→                      </tr>
+   383→                    </thead>
+   384→                    <tbody className="divide-y divide-gray-100">
+   385→                      {filteredRanking.map((emp, idx) => {
+   386→                        const pos = idx + 1;
+   387→                        const rankBadge = pos <= 3 ? 'bg-red-500' : pos <= 7 ? 'bg-orange-400' : '';
+   388→                        const rowBg = pos <= 3 ? 'bg-red-50/40' : '';
+   389→                        const empTurno = empTurnoMap.get(emp.codigoEmp) || '';
+   390→                        const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
+   391→                        const TurnoIcon = tMeta.icon;
+   392→
+   393→                        return (
+   394→                          <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-gray-50 cursor-pointer transition-colors`}
+   395→                            onClick={() => openProfile(emp.codigoEmp)}>
+   396→                            <td className="px-3 py-3">
+   397→                              {rankBadge ? (
+   398→                                <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
+   399→                              ) : (
+   400→                                <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
+   401→                              )}
+   402→                            </td>
+   403→                            <td className="px-3 py-3">
+   404→                              <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
+   405→                              <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
+   406→                            </td>
+   407→                            <td className="px-3 py-3">
+   408→                              <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
+   409→                                <TurnoIcon className="h-3 w-3" /> {empTurno}
+   410→                              </span>
+   411→                            </td>
+   412→                            <td className="px-3 py-3 text-right">
+   413→                              <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>{emp.totalFuera}</span>
+   414→                            </td>
+   415→                            <td className="px-3 py-3 text-right"><span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span></td>
+   416→                            <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
+   417→                            <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
+   418→                            <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.eventosCount}</span></td>
+   419→                          </tr>
+   420→                        );
+   421→                      })}
+   422→                    </tbody>
+   423→                  </table>
+   424→                </div>
+   425→              </div>
+   426→            </div>
+   427→
+   428→            {/* ── Por Turno cards ── */}
+   429→            {filteredTurnoCards.length > 0 && (
+   430→              <div>
+   431→                <h2 className="text-sm font-bold text-gray-800 mb-3">Por Turno</h2>
+   432→                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+   433→                  {filteredTurnoCards.map(tr => {
+   434→                    const tm = turnoMeta[tr.turno] || DEFAULT_TURNO_META;
+   435→                    const TIcon = tm.icon;
+   436→                    return (
+   437→                      <div key={tr.turno} className={`rounded-xl border ${tm.border} ${tm.bg} p-4 cursor-pointer hover:shadow-md transition-shadow`}
+   438→                        onClick={() => { setFilterTurno(tr.turno); }}>
+   439→                        <div className="flex items-center gap-2 mb-1">
+   440→                          <TIcon className={`h-4 w-4 ${tm.text}`} />
+   441→                          <span className={`text-sm font-bold ${tm.text}`}>{tr.turno}</span>
+   442→                          <span className="text-[10px] text-gray-400">{tm.label}</span>
+   443→                        </div>
+   444→                        <p className={`text-xl font-black font-mono ${tm.text}`}>{tr.totalFuera}</p>
+   445→                        <p className="text-xs text-gray-500 mt-1">{tr.eventosCount} eventos &middot; {tr.empleados.length} operadores</p>
+   446→                      </div>
+   447→                    );
+   448→                  })}
+   449→                </div>
+   450→              </div>
+   451→            )}
+   452→          </>
+   453→        )}
+   454→      </main>
+   455→
+   456→      {/* ═══════════ PROFILE DIALOG ═══════════ */}
+   457→      <Dialog open={profileEmp !== null} onOpenChange={o => { if (!o) setProfileEmp(null); }}>
+   458→        <DialogContent className="sm:max-w-4xl max-h-[90vh] p-0 overflow-hidden flex flex-col">
+   459→          {profileEmp && (
+   460→            <div className="bg-white border-b border-gray-200 px-6 py-4 shrink-0">
+   461→              <div className="flex items-center justify-between">
+   462→                <div>
+   463→                  <DialogTitle className="text-base font-bold text-gray-800">OPERADOR: {profileEmp.nombre}</DialogTitle>
+   464→                  <DialogDescription className="text-xs text-gray-400 mt-0.5">
+   465→                    Codigo {profileEmp.codigoEmp} &middot; {profileEmp.empresa} &middot; {profileEmp.sector}
+   466→                  </DialogDescription>
+   467→                </div>
+   468→                <div className="flex items-center gap-3">
+   469→                  <span className="text-xs text-gray-400">{empDays.reduce((s, d) => s + d.tiemposFuera.length, 0)} salidas</span>
+   470→                  <span className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full ${(turnoMeta[profileEmp.turno] || DEFAULT_TURNO_META).bg} ${(turnoMeta[profileEmp.turno] || DEFAULT_TURNO_META).text}`}>
+   471→                    {(() => { const TIcon = (turnoMeta[profileEmp.turno] || DEFAULT_TURNO_META).icon; return <TIcon className="h-3 w-3" />; })()}
+   472→                    {profileEmp.turno}
+   473→                  </span>
+   474→                </div>
+   475→              </div>
+   476→              <div className="flex gap-1 mt-3 overflow-x-auto pb-1">
+   477→                {empDays.map((d, i) => (
+   478→                  <button key={d.fecha} onClick={() => setProfileDateIdx(i)}
+   479→                    className={`px-3 py-1.5 rounded text-xs font-medium whitespace-nowrap transition-colors ${profileDateIdx === i ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+   480→                    {d.fecha}
+   481→                    {d.totalFueraSegundos > 0 && <span className="ml-1 opacity-70">({d.totalFuera})</span>}
+   482→                  </button>
+   483→                ))}
+   484→              </div>
+   485→            </div>
+   486→          )}
+   487→
+   488→          {profileDay && (
+   489→            <ScrollArea className="flex-1">
+   490→              <div className="p-6 space-y-5">
+   491→                <div className="grid grid-cols-3 gap-3">
+   492→                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+   493→                    <p className="text-[10px] text-gray-400 uppercase">Jornada</p>
+   494→                    <p className="text-sm font-semibold text-gray-700 mt-0.5">{profileDay.jornada || '—'}</p>
+   495→                  </div>
+   496→                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+   497→                    <p className="text-[10px] text-gray-400 uppercase">Total Fuera</p>
+   498→                    <p className={`text-sm font-bold font-mono mt-0.5 ${durTextColor(profileDay.totalFueraSegundos)}`}>{profileDay.totalFuera}</p>
+   499→                  </div>
+   500→                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+   501→                    <p className="text-[10px] text-gray-400 uppercase">Salidas</p>
+   502→                    <p className="text-sm font-bold text-gray-700 mt-0.5">{profileDay.tiemposFuera.length}</p>
+   503→                  </div>
+   504→                </div>
+   505→
+   506→                {/* All movements - unified table */}
+   507→                <div>
+   508→                  <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Todos los Movimientos</h3>
+   509→                  <UnifiedMovements day={profileDay} />
+   510→                </div>
+   511→              </div>
+   512→            </ScrollArea>
+   513→          )}
+   514→        </DialogContent>
+   515→      </Dialog>
+   516→
+   517→      {/* Toast notification */}
+   518→      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+   519→    </div>
+   520→  );
+   521→}
+   522→
+   523→/* Unified movements table: accesos + facial + comidas sorted by time */
+   524→interface UnifiedEvent {
+   525→  hora: string; seg: number; tipo: 'entrada' | 'salida' | 'facial' | 'comida' | 'otro';
+   526→  label: string; duracion?: string; duracionSeg?: number;
+   527→}
+   528→
+   529→function UnifiedMovements({ day }: { day: EmployeeDay }) {
+   530→  const events = useMemo(() => {
+   531→    const list: UnifiedEvent[] = [];
+   532→
+   533→    // Access events
+   534→    for (const ev of day.accesosEventos) {
+   535→      const seg = timeToS(ev.hora);
+   536→      if (ev.terminal === 'Entrada Depo') {
+   537→        const paired = day.tiemposFuera.find(t => t.entrada === ev.hora);
+   538→        list.push({
+   539→          hora: ev.hora, seg, tipo: 'entrada', label: 'Entrada Depo',
+   540→          duracion: paired?.duracion, duracionSeg: paired?.duracionSegundos,
+   541→        });
+   542→      } else if (ev.terminal === 'Salida Depo') {
+   543→        list.push({ hora: ev.hora, seg, tipo: 'salida', label: 'Salida Depo' });
+   544→      } else {
+   545→        list.push({ hora: ev.hora, seg, tipo: 'otro', label: ev.terminal });
+   546→      }
+   547→    }
+   548→
+   549→    // Facial events
+   550→    for (const f of day.facialRegistros) {
+   551→      list.push({ hora: f.hora, seg: timeToS(f.hora), tipo: 'facial', label: f.zona || 'Facial' });
+   552→    }
+   553→
+   554→    // Comida events
+   555→    for (const h of day.comidasHoras) {
+   556→      list.push({ hora: h, seg: timeToS(h), tipo: 'comida', label: 'TK Comida' });
+   557→    }
+   558→
+   559→    return list.sort((a, b) => a.seg - b.seg);
+   560→  }, [day]);
+   561→
+   562→  if (events.length === 0) return <p className="text-sm text-gray-300 italic">Sin movimientos registrados</p>;
+   563→
+   564→  const styleMap: Record<string, { bg: string; icon: typeof ArrowDownToLine }> = {
+   565→    entrada: { bg: 'bg-emerald-100 text-emerald-700', icon: ArrowDownToLine },
+   566→    salida:  { bg: 'bg-red-100 text-red-700', icon: ArrowUpFromLine },
+   567→    facial:  { bg: 'bg-blue-100 text-blue-700', icon: ScanFace },
+   568→    comida:  { bg: 'bg-orange-100 text-orange-700', icon: UtensilsCrossed },
+   569→    otro:    { bg: 'bg-gray-100 text-gray-600', icon: Clock },
+   570→  };
+   571→
+   572→  return (
+   573→    <div className="border border-gray-200 rounded-lg overflow-hidden">
+   574→      <table className="w-full text-sm">
+   575→        <thead>
+   576→          <tr className="bg-gray-50">
+   577→            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-left w-10">#</th>
+   578→            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-center">Hora</th>
+   579→            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-left">Evento</th>
+   580→            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-right">Tiempo Fuera</th>
+   581→          </tr>
+   582→        </thead>
+   583→        <tbody className="divide-y divide-gray-100">
+   584→          {events.map((ev, i) => {
+   585→            const s = styleMap[ev.tipo] || styleMap.otro;
+   586→            const Icon = s.icon;
+   587→            return (
+   588→              <tr key={i} className={ev.tipo === 'salida' ? 'bg-red-50/30' : ev.tipo === 'entrada' ? 'bg-emerald-50/30' : ''}>
+   589→                <td className="px-3 py-2">
+   590→                  <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-200 text-gray-600 text-[10px] font-bold">{i + 1}</span>
+   591→                </td>
+   592→                <td className="px-3 py-2 text-center">
+   593→                  <span className="font-mono text-xs font-medium text-gray-700">{ev.hora}</span>
+   594→                </td>
+   595→                <td className="px-3 py-2">
+   596→                  <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${s.bg}`}>
+   597→                    <Icon className="h-3 w-3" />
+   598→                    {ev.label}
+   599→                  </span>
+   600→                </td>
+   601→                <td className="px-3 py-2 text-right">
+   602→                  {ev.duracion ? (
+   603→                    <span className={`inline-block px-2 py-0.5 rounded font-mono text-xs font-bold ${durTextColor(ev.duracionSeg ?? 0)}`}>
+   604→                      {ev.duracion}
+   605→                    </span>
+   606→                  ) : (
+   607→                    <span className="text-gray-300">—</span>
+   608→                  )}
+   609→                </td>
+   610→              </tr>
+   611→            );
+   612→          })}
+   613→        </tbody>
+   614→      </table>
+   615→    </div>
+   616→  );
+   617→}
+   618→
+   619→/* ═══════════════════════════════════════
+   620→   SUB-COMPONENTS
+   621→   ═══════════════════════════════════════ */
+   622→
+   623→function MetricCard({ icon, label, value, sub, accent, subBg }: {
+   624→  icon: React.ReactNode; label: string; value: string;
+   625→  sub?: string; accent: string; subBg?: string;
+   626→}) {
+   627→  return (
+   628→    <div className={`bg-white border border-gray-200 rounded-lg p-4 border-l-4 ${accent}`}>
+   629→      <div className="flex items-center justify-between mb-1">
+   630→        <span className="text-xs text-gray-500 font-medium">{label}</span>
+   631→        {icon}
+   632→      </div>
+   633→      <p className="text-xl font-black text-gray-800">{value}</p>
+   634→      {sub && (
+   635→        <p className={`text-[11px] mt-1 ${subBg || ''} px-1.5 py-0.5 rounded inline-block ${subBg ? 'text-gray-500' : 'text-gray-400'}`}>{sub}</p>
+   636→      )}
+   637→    </div>
+   638→  );
+   639→}
