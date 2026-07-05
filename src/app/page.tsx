@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -11,8 +10,8 @@ import {
 } from '@/components/ui/dialog';
 import {
   Upload, RefreshCw, Clock, Users, UtensilsCrossed, ScanFace,
-  FileSpreadsheet, Search, Sun, Sunset, Moon, Download,
-  ArrowUpFromLine, ArrowDownToLine, ChevronDown, AlertTriangle,
+  FileSpreadsheet, Search, Sun, Sunset, Moon,
+  ArrowUpFromLine, ArrowDownToLine, AlertTriangle, CheckCircle2, XCircle,
 } from 'lucide-react';
 
 /* ═══════════════════════════════════════
@@ -75,36 +74,91 @@ const turnoMeta: Record<string, { label: string; icon: typeof Sun; bg: string; t
 };
 
 /* ═══════════════════════════════════════
+   TOAST NOTIFICATION
+   ═══════════════════════════════════════ */
+
+function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
+  useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
+  const Icon = type === 'success' ? CheckCircle2 : XCircle;
+  const bg = type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700';
+  return (
+    <div className={`fixed bottom-4 right-4 z-[100] flex items-center gap-2 px-4 py-3 rounded-lg border shadow-lg text-sm font-medium animate-in slide-in-from-bottom-2 ${bg}`}>
+      <Icon className="h-4 w-4 shrink-0" />
+      <span>{message}</span>
+      <button onClick={onClose} className="ml-2 opacity-50 hover:opacity-100"><XCircle className="h-3.5 w-3.5" /></button>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════
    MAIN PAGE
    ═══════════════════════════════════════ */
 
 export default function Home() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
-  const [tab, setTab] = useState<'ranking' | 'turno'>('ranking');
   const [search, setSearch] = useState('');
   const [filterTurno, setFilterTurno] = useState('all');
   const [filterDate, setFilterDate] = useState('all');
   const [showUpload, setShowUpload] = useState(false);
   const [profileEmp, setProfileEmp] = useState<EmployeeDay | null>(null);
   const [profileDateIdx, setProfileDateIdx] = useState(0);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const fileInputsRef = useRef<Record<string, HTMLInputElement | null>>({});
+
+  const showToast = useCallback((message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    try { const r = await window.fetch('/api/dashboard'); if (r.ok) setData(await r.json()); }
-    catch (e) { console.error(e); }
-    finally { setLoading(false); }
+    setError(null);
+    try {
+      const r = await window.fetch('/api/dashboard');
+      if (r.ok) {
+        const json = await r.json();
+        setData(json);
+        if (json.error) setError(json.error);
+      } else {
+        const text = await r.text().catch(() => 'Error desconocido');
+        setError(`Error del servidor (${r.status}): ${text}`);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Error de conexión';
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const upload = async (ep: string, file: File) => {
+  const upload = async (ep: string, label: string, file: File) => {
     setUploading(ep);
-    const fd = new FormData(); fd.append('file', file);
-    try { const r = await window.fetch(ep, { method: 'POST', body: fd }); if (r.ok) fetchData(); }
-    catch (e) { console.error(e); }
-    finally { setUploading(null); setShowUpload(false); }
+    setShowUpload(false);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await window.fetch(ep, { method: 'POST', body: fd });
+      if (r.ok) {
+        const json = await r.json().catch(() => null);
+        showToast(`${label}: ${json?.count ?? 0} registros cargados`, 'success');
+        await fetchData();
+      } else {
+        const text = await r.text().catch(() => 'Error desconocido');
+        showToast(`${label}: ${text}`, 'error');
+      }
+    } catch (e) {
+      showToast(`${label}: Error de conexión`, 'error');
+    } finally {
+      setUploading(null);
+    }
+  };
+
+  const triggerFileInput = (ep: string) => {
+    fileInputsRef.current[ep]?.click();
   };
 
   /* ── Derived data ── */
@@ -123,7 +177,6 @@ export default function Home() {
     return data.rankingPorTurno.filter(tr => tr.empleados.length > 0);
   }, [data]);
 
-  // Profile
   const empDays = useMemo(() => {
     if (!profileEmp || !data) return [];
     return data.employees
@@ -144,143 +197,157 @@ export default function Home() {
   const maxFuera = data?.ranking[0];
   const totalEventos = data?.employees.reduce((s, e) => s + e.tiemposFuera.length, 0) || 0;
 
+  const hasData = data && data.employees.length > 0;
+  const isEmpty = data && data.employees.length === 0 && !error;
+
   return (
     <div className="min-h-screen bg-white flex flex-col">
       {/* ═══════════ HEADER ═══════════ */}
       <header className="border-b border-gray-200 bg-white sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
-          <h1 className="text-lg font-bold text-gray-800">Tiempos Fuera de Deposito</h1>
-          <div className="flex items-center gap-2">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+          <h1 className="text-base sm:text-lg font-bold text-gray-800 whitespace-nowrap">Tiempos Fuera de Deposito</h1>
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
               <Input placeholder="Buscar operador..." value={search} onChange={e => setSearch(e.target.value)}
-                className="pl-8 h-8 w-52 text-sm border-gray-300" />
+                className="pl-8 h-8 w-40 sm:w-52 text-sm border-gray-300" />
             </div>
             <select value={filterTurno} onChange={e => setFilterTurno(e.target.value)}
-              className="h-8 text-sm border border-gray-300 rounded-md px-2.5 bg-white text-gray-600 focus:outline-none">
+              className="h-8 text-sm border border-gray-300 rounded-md px-2 bg-white text-gray-600 focus:outline-none">
               <option value="all">Turno: Todos</option>
               {data?.turnos.map(t => <option key={t} value={t}>{t} — {turnoMeta[t]?.label || t}</option>)}
             </select>
             <select value={filterDate} onChange={e => setFilterDate(e.target.value)}
-              className="h-8 text-sm border border-gray-300 rounded-md px-2.5 bg-white text-gray-600 focus:outline-none">
+              className="h-8 text-sm border border-gray-300 rounded-md px-2 bg-white text-gray-600 focus:outline-none">
               <option value="all">Fecha: Todas</option>
               {data?.summary.dates.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
-            <div className="relative">
-              <Button variant="outline" size="sm" className="h-8 text-sm border-gray-300 text-gray-600"
-                onClick={() => setShowUpload(!showUpload)}>
-                <Upload className="h-3.5 w-3.5 mr-1.5" /> Cargar Excel
-              </Button>
-              {showUpload && (
-                <div className="absolute right-0 top-full mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg p-3 z-50 space-y-2">
-                  {[
-                    { label: 'Accesos', ep: '/api/upload-accesos' },
-                    { label: 'Comidas (TK)', ep: '/api/upload-comidas' },
-                    { label: 'Facial', ep: '/api/upload-facial' },
-                  ].map(({ label, ep }) => (
-                    <label key={ep}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer transition-colors hover:bg-gray-50 ${uploading === ep ? 'opacity-50' : ''}`}>
-                      <input type="file" accept=".xlsx,.xls" className="hidden"
-                        onChange={e => { const f = e.target.files?.[0]; if (f) upload(ep, f); e.target.value = ''; }} />
-                      <FileSpreadsheet className="h-4 w-4 text-gray-400" />
-                      <span className="text-gray-700">{label}</span>
-                    </label>
-                  ))}
-                  <p className="text-[10px] text-gray-400 px-1">Se sobreescribe con cada carga</p>
-                </div>
-              )}
-            </div>
+            <Button variant="outline" size="sm" className="h-8 text-sm border-gray-300 text-gray-600"
+              onClick={() => setShowUpload(!showUpload)}>
+              <Upload className="h-3.5 w-3.5 mr-1" /> Cargar
+            </Button>
             <Button size="sm" className="h-8 bg-red-500 hover:bg-red-600 text-white text-sm"
               onClick={fetchData} disabled={loading}>
-              <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} /> Actualizar
+              <RefreshCw className={`h-3.5 w-3.5 mr-1 ${loading ? 'animate-spin' : ''}`} /> Actualizar
             </Button>
           </div>
         </div>
+
+        {/* Upload dropdown */}
+        {showUpload && (
+          <div className="border-t border-gray-100 bg-gray-50 px-4 sm:px-6 py-3">
+            <div className="max-w-7xl mx-auto flex items-center gap-3 flex-wrap">
+              <span className="text-xs text-gray-500 font-medium">Cargar archivo:</span>
+              {[
+                { label: 'Accesos', ep: '/api/upload-accesos' },
+                { label: 'Comidas (TK)', ep: '/api/upload-comidas' },
+                { label: 'Facial', ep: '/api/upload-facial' },
+              ].map(({ label, ep }) => (
+                <Button key={ep} variant="outline" size="sm" className="h-8 text-xs border-gray-300 text-gray-600"
+                  disabled={uploading !== null}
+                  onClick={() => triggerFileInput(ep)}>
+                  {uploading === ep ? (
+                    <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
+                  ) : (
+                    <FileSpreadsheet className="h-3 w-3 mr-1.5 text-gray-400" />
+                  )}
+                  {label}
+                </Button>
+              ))}
+              <input
+                key="/api/upload-accesos"
+                ref={el => { fileInputsRef.current['/api/upload-accesos'] = el; }}
+                type="file" accept=".xlsx,.xls" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-accesos', 'Accesos', f); e.target.value = ''; }} />
+              <input
+                key="/api/upload-comidas"
+                ref={el => { fileInputsRef.current['/api/upload-comidas'] = el; }}
+                type="file" accept=".xlsx,.xls" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-comidas', 'Comidas', f); e.target.value = ''; }} />
+              <input
+                key="/api/upload-facial"
+                ref={el => { fileInputsRef.current['/api/upload-facial'] = el; }}
+                type="file" accept=".xlsx,.xls" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-facial', 'Facial', f); e.target.value = ''; }} />
+              <span className="text-[10px] text-gray-400 ml-2">Se sobreescribe con cada carga</span>
+            </div>
+          </div>
+        )}
       </header>
 
       {/* ═══════════ MAIN ═══════════ */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-5 space-y-4">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-5 space-y-4">
 
-        {/* ── Metric Cards ── */}
-        {data && !loading && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <MetricCard
-              icon={<Users className="h-5 w-5 text-blue-500" />}
-              label="Total Empleados" value={String(data.summary.totalEmployees)}
-              accent="border-l-blue-500"
-            />
-            <MetricCard
-              icon={<Clock className="h-5 w-5 text-red-500" />}
-              label="Suma Tiempos Fuera" value={formatHMS(totalFueraAll)}
-              sub={`${totalEventos} eventos`}
-              accent="border-l-red-500"
-              subBg="bg-red-50"
-            />
-            <MetricCard
-              icon={<AlertTriangle className="h-5 w-5 text-amber-500" />}
-              label="Promedio por Empleado" value={data.summary.avgOutsidePerEmployee}
-              accent="border-l-amber-500"
-            />
-            <MetricCard
-              icon={<Clock className="h-5 w-5 text-orange-500" />}
-              label="Mayor Tiempo Fuera"
-              value={maxFuera ? maxFuera.totalFuera : '00:00:00'}
-              sub={maxFuera ? maxFuera.nombre : ''}
-              accent="border-l-orange-500"
-            />
-          </div>
-        )}
-
-        {/* ── Summary bar ── */}
-        {data && !loading && (
-          <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-3 flex items-center gap-6">
-            <div className="flex items-center gap-1.5 text-red-600">
-              <AlertTriangle className="h-4 w-4" />
-              <span className="text-xs font-semibold uppercase tracking-wider">Resumen</span>
+        {/* ── Error state ── */}
+        {error && !loading && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+            <XCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-red-700">Error de conexión con la base de datos</p>
+              <p className="text-xs text-red-500 mt-1">{error}</p>
+              <p className="text-xs text-red-400 mt-2">Verificá que la variable DATABASE_URL esté configurada en Vercel.</p>
             </div>
-            <span className="text-sm"><b className="text-red-600">{totalEventos}</b> <span className="text-gray-500">salidas</span></span>
-            <span className="text-sm"><b className="text-red-600">{formatHMS(totalFueraAll)}</b> <span className="text-gray-500">suma total</span></span>
-            <span className="text-sm"><b className="text-red-600">{data.summary.totalEmployees}</b> <span className="text-gray-500">empleados</span></span>
           </div>
         )}
 
         {/* ── Loading ── */}
-        {loading && <div className="space-y-3">{[...Array(4)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>}
-
-        {/* ── Empty ── */}
-        {!loading && data && data.employees.length === 0 && (
-          <div className="text-center py-24">
-            <FileSpreadsheet className="h-12 w-12 mx-auto text-gray-200 mb-4" />
-            <p className="text-gray-400 text-sm">Carga los archivos Excel para comenzar</p>
+        {loading && !error && (
+          <div className="space-y-3">
+            <Skeleton className="h-4 w-48" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
           </div>
         )}
 
-        {/* ══════════════════════════════════════════════════
-            TABS: RANKING / POR TURNO
-            ══════════════════════════════════════════════════ */}
-        {data && !loading && data.employees.length > 0 && (
-          <div className="space-y-4">
-            {/* Tab bar */}
-            <div className="flex items-center gap-6 border-b border-gray-200">
-              <button onClick={() => setTab('ranking')}
-                className={`pb-2.5 text-sm font-medium transition-colors ${tab === 'ranking' ? 'text-red-600 border-b-2 border-red-500' : 'text-gray-500 hover:text-gray-700'}`}>
-                Ranking
-              </button>
-              <button onClick={() => setTab('turno')}
-                className={`pb-2.5 text-sm font-medium transition-colors ${tab === 'turno' ? 'text-red-600 border-b-2 border-red-500' : 'text-gray-500 hover:text-gray-700'}`}>
-                Por Turno
-              </button>
+        {/* ── Empty state (no data yet) ── */}
+        {isEmpty && (
+          <div className="text-center py-20">
+            <FileSpreadsheet className="h-16 w-16 mx-auto text-gray-200 mb-4" />
+            <p className="text-gray-500 text-base font-medium">No hay datos cargados</p>
+            <p className="text-gray-400 text-sm mt-1">Usá el botón &quot;Cargar&quot; de arriba para subir los archivos Excel</p>
+            <div className="flex items-center justify-center gap-2 mt-4">
+              <Button variant="outline" size="sm" onClick={() => triggerFileInput('/api/upload-accesos')}
+                className="text-sm">
+                <FileSpreadsheet className="h-4 w-4 mr-2" /> Cargar Accesos
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════
+            CONTENT (has data)
+            ══════════════════════════════════════ */}
+        {hasData && !loading && (
+          <>
+            {/* ── Metric Cards ── */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <MetricCard icon={<Users className="h-5 w-5 text-blue-500" />} label="Total Empleados" value={String(data.summary.totalEmployees)} accent="border-l-blue-500" />
+              <MetricCard icon={<Clock className="h-5 w-5 text-red-500" />} label="Suma Tiempos Fuera" value={formatHMS(totalFueraAll)} sub={`${totalEventos} eventos`} accent="border-l-red-500" subBg="bg-red-50" />
+              <MetricCard icon={<AlertTriangle className="h-5 w-5 text-amber-500" />} label="Promedio por Empleado" value={data.summary.avgOutsidePerEmployee} accent="border-l-amber-500" />
+              <MetricCard icon={<Clock className="h-5 w-5 text-orange-500" />} label="Mayor Tiempo Fuera" value={maxFuera ? maxFuera.totalFuera : '00:00:00'} sub={maxFuera ? maxFuera.nombre : ''} accent="border-l-orange-500" />
             </div>
 
-            {/* ══════ RANKING TAB ══════ */}
-            {tab === 'ranking' && (
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-sm font-bold text-gray-800">Ranking por Tiempo Fuera de Deposito</h2>
-                  <span className="text-xs text-gray-400">{filteredRanking.length} operadores</span>
-                </div>
+            {/* ── Summary bar ── */}
+            <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-2.5 flex items-center gap-6 flex-wrap">
+              <div className="flex items-center gap-1.5 text-red-600">
+                <AlertTriangle className="h-4 w-4" />
+                <span className="text-xs font-semibold uppercase tracking-wider">Resumen</span>
+              </div>
+              <span className="text-sm"><b className="text-red-600">{totalEventos}</b> <span className="text-gray-500">salidas</span></span>
+              <span className="text-sm"><b className="text-red-600">{formatHMS(totalFueraAll)}</b> <span className="text-gray-500">suma total</span></span>
+              <span className="text-sm"><b className="text-red-600">{data.summary.totalEmployees}</b> <span className="text-gray-500">empleados</span></span>
+            </div>
 
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
+            {/* ── Ranking table ── */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-bold text-gray-800">Ranking por Tiempo Fuera de Deposito</h2>
+                <span className="text-xs text-gray-400">{filteredRanking.length} operadores</span>
+              </div>
+
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 text-left">
@@ -299,8 +366,6 @@ export default function Home() {
                         const pos = idx + 1;
                         const rankBadge = pos <= 3 ? 'bg-red-500' : pos <= 7 ? 'bg-orange-400' : '';
                         const rowBg = pos <= 3 ? 'bg-red-50/40' : '';
-
-                        // Find the most common turno for this employee
                         const empTurno = data.employees.find(e => e.codigoEmp === emp.codigoEmp)?.turno || 'OTRO';
                         const tMeta = turnoMeta[empTurno] || turnoMeta.OTRO;
                         const TurnoIcon = tMeta.icon;
@@ -310,9 +375,7 @@ export default function Home() {
                             onClick={() => openProfile(emp.codigoEmp)}>
                             <td className="px-3 py-3">
                               {rankBadge ? (
-                                <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>
-                                  {pos}
-                                </span>
+                                <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
                               ) : (
                                 <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
                               )}
@@ -327,22 +390,12 @@ export default function Home() {
                               </span>
                             </td>
                             <td className="px-3 py-3 text-right">
-                              <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>
-                                {emp.totalFuera}
-                              </span>
+                              <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>{emp.totalFuera}</span>
                             </td>
-                            <td className="px-3 py-3 text-right">
-                              <span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span>
-                            </td>
-                            <td className="px-3 py-3 text-right">
-                              <span className="text-gray-600 text-sm">{emp.diasCount}</span>
-                            </td>
-                            <td className="px-3 py-3 text-right">
-                              <span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span>
-                            </td>
-                            <td className="px-3 py-3 text-right">
-                              <span className="text-gray-600 text-sm">{emp.eventosCount}</span>
-                            </td>
+                            <td className="px-3 py-3 text-right"><span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span></td>
+                            <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
+                            <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
+                            <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.eventosCount}</span></td>
                           </tr>
                         );
                       })}
@@ -350,36 +403,33 @@ export default function Home() {
                   </table>
                 </div>
               </div>
-            )}
+            </div>
 
-            {/* ══════ POR TURNO TAB ══════ */}
-            {tab === 'turno' && (
+            {/* ── Por Turno cards ── */}
+            {filteredTurnoCards.length > 0 && (
               <div>
                 <h2 className="text-sm font-bold text-gray-800 mb-3">Por Turno</h2>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {filteredTurnoCards.map(tr => {
                     const tm = turnoMeta[tr.turno] || turnoMeta.OTRO;
                     const TIcon = tm.icon;
                     return (
-                      <div key={tr.turno} className={`rounded-xl border ${tm.border} ${tm.bg} p-5 cursor-pointer hover:shadow-md transition-shadow`}
-                        onClick={() => { setFilterTurno(tr.turno); setTab('ranking'); }}>
-                        <div className="flex items-center gap-2 mb-2">
-                          <TIcon className={`h-5 w-5 ${tm.text}`} />
+                      <div key={tr.turno} className={`rounded-xl border ${tm.border} ${tm.bg} p-4 cursor-pointer hover:shadow-md transition-shadow`}
+                        onClick={() => { setFilterTurno(tr.turno); }}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <TIcon className={`h-4 w-4 ${tm.text}`} />
                           <span className={`text-sm font-bold ${tm.text}`}>{tr.turno}</span>
                           <span className="text-[10px] text-gray-400">{tm.label}</span>
                         </div>
-                        <p className={`text-2xl font-black font-mono ${tm.text}`}>{tr.totalFuera}</p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          {tr.eventosCount} eventos &middot; {formatHMS(tr.totalFueraSegundos)}
-                        </p>
-                        <p className="text-[10px] text-gray-400 mt-1">{tr.empleados.length} operadores</p>
+                        <p className={`text-xl font-black font-mono ${tm.text}`}>{tr.totalFuera}</p>
+                        <p className="text-xs text-gray-500 mt-1">{tr.eventosCount} eventos &middot; {tr.empleados.length} operadores</p>
                       </div>
                     );
                   })}
                 </div>
               </div>
             )}
-          </div>
+          </>
         )}
       </main>
 
@@ -390,34 +440,23 @@ export default function Home() {
             <div className="bg-white border-b border-gray-200 px-6 py-4 shrink-0">
               <div className="flex items-center justify-between">
                 <div>
-                  <DialogTitle className="text-base font-bold text-gray-800">
-                    OPERADOR: {profileEmp.nombre}
-                  </DialogTitle>
+                  <DialogTitle className="text-base font-bold text-gray-800">OPERADOR: {profileEmp.nombre}</DialogTitle>
                   <DialogDescription className="text-xs text-gray-400 mt-0.5">
                     Codigo {profileEmp.codigoEmp} &middot; {profileEmp.empresa} &middot; {profileEmp.sector}
                   </DialogDescription>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-xs text-gray-400">
-                    {empDays.reduce((s, d) => s + d.tiemposFuera.length, 0)} salidas
-                  </span>
-                  <span className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full ${
-                    (turnoMeta[profileEmp.turno] || turnoMeta.OTRO).bg
-                  } ${(turnoMeta[profileEmp.turno] || turnoMeta.OTRO).text}`}>
+                  <span className="text-xs text-gray-400">{empDays.reduce((s, d) => s + d.tiemposFuera.length, 0)} salidas</span>
+                  <span className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full ${(turnoMeta[profileEmp.turno] || turnoMeta.OTRO).bg} ${(turnoMeta[profileEmp.turno] || turnoMeta.OTRO).text}`}>
                     {(() => { const TIcon = (turnoMeta[profileEmp.turno] || turnoMeta.OTRO).icon; return <TIcon className="h-3 w-3" />; })()}
                     {profileEmp.turno}
                   </span>
                 </div>
               </div>
-
-              {/* Date tabs */}
               <div className="flex gap-1 mt-3 overflow-x-auto pb-1">
                 {empDays.map((d, i) => (
                   <button key={d.fecha} onClick={() => setProfileDateIdx(i)}
-                    className={`px-3 py-1.5 rounded text-xs font-medium whitespace-nowrap transition-colors ${profileDateIdx === i
-                      ? 'bg-red-500 text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}>
+                    className={`px-3 py-1.5 rounded text-xs font-medium whitespace-nowrap transition-colors ${profileDateIdx === i ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
                     {d.fecha}
                     {d.totalFueraSegundos > 0 && <span className="ml-1 opacity-70">({d.totalFuera})</span>}
                   </button>
@@ -429,7 +468,6 @@ export default function Home() {
           {profileDay && (
             <ScrollArea className="flex-1">
               <div className="p-6 space-y-5">
-                {/* Day summary */}
                 <div className="grid grid-cols-3 gap-3">
                   <div className="bg-gray-50 rounded-lg p-3 text-center">
                     <p className="text-[10px] text-gray-400 uppercase">Jornada</p>
@@ -437,9 +475,7 @@ export default function Home() {
                   </div>
                   <div className="bg-gray-50 rounded-lg p-3 text-center">
                     <p className="text-[10px] text-gray-400 uppercase">Total Fuera</p>
-                    <p className={`text-sm font-bold font-mono mt-0.5 ${durTextColor(profileDay.totalFueraSegundos)}`}>
-                      {profileDay.totalFuera}
-                    </p>
+                    <p className={`text-sm font-bold font-mono mt-0.5 ${durTextColor(profileDay.totalFueraSegundos)}`}>{profileDay.totalFuera}</p>
                   </div>
                   <div className="bg-gray-50 rounded-lg p-3 text-center">
                     <p className="text-[10px] text-gray-400 uppercase">Salidas</p>
@@ -467,29 +503,19 @@ export default function Home() {
                           {profileDay.tiemposFuera.map((t, i) => (
                             <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
                               <td className="px-3 py-2">
-                                <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-red-500 text-white text-[10px] font-bold">
-                                  {i + 1}
-                                </span>
+                                <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-red-500 text-white text-[10px] font-bold">{i + 1}</span>
                               </td>
-                              <td className="px-3 py-2 text-center">
-                                <span className="font-mono text-xs text-red-500 font-medium">{t.salida}</span>
-                              </td>
-                              <td className="px-3 py-2 text-center">
-                                <span className="font-mono text-xs text-emerald-600 font-medium">{t.entrada}</span>
-                              </td>
+                              <td className="px-3 py-2 text-center"><span className="font-mono text-xs text-red-500 font-medium">{t.salida}</span></td>
+                              <td className="px-3 py-2 text-center"><span className="font-mono text-xs text-emerald-600 font-medium">{t.entrada}</span></td>
                               <td className="px-3 py-2 text-right">
-                                <span className={`inline-block px-2 py-0.5 rounded font-mono text-xs font-bold ${durTextColor(t.duracionSegundos)}`}>
-                                  {t.duracion}
-                                </span>
+                                <span className={`inline-block px-2 py-0.5 rounded font-mono text-xs font-bold ${durTextColor(t.duracionSegundos)}`}>{t.duracion}</span>
                               </td>
                             </tr>
                           ))}
                           {profileDay.tiemposFuera.length > 1 && (
                             <tr className="bg-red-50">
                               <td colSpan={3} className="px-3 py-2 text-xs font-semibold text-red-700">Total</td>
-                              <td className="px-3 py-2 text-right">
-                                <span className="font-mono text-xs font-black text-red-600">{profileDay.totalFuera}</span>
-                              </td>
+                              <td className="px-3 py-2 text-right"><span className="font-mono text-xs font-black text-red-600">{profileDay.totalFuera}</span></td>
                             </tr>
                           )}
                         </tbody>
@@ -525,9 +551,7 @@ export default function Home() {
                     <div className="flex flex-wrap gap-1.5">
                       {profileDay.facialRegistros.map((f, i) => (
                         <span key={i} className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border ${
-                          f.zona.toLowerCase().includes('entrada')
-                            ? 'bg-blue-50 text-blue-600 border-blue-200'
-                            : 'bg-purple-50 text-purple-600 border-purple-200'
+                          f.zona.toLowerCase().includes('entrada') ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-purple-50 text-purple-600 border-purple-200'
                         }`}>
                           <ScanFace className="h-3 w-3" /> {f.hora} — {f.zona}
                         </span>
@@ -540,6 +564,9 @@ export default function Home() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Toast notification */}
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </div>
   );
 }
@@ -560,9 +587,7 @@ function MetricCard({ icon, label, value, sub, accent, subBg }: {
       </div>
       <p className="text-xl font-black text-gray-800">{value}</p>
       {sub && (
-        <p className={`text-[11px] mt-1 ${subBg || ''} px-1.5 py-0.5 rounded inline-block ${subBg ? 'text-gray-500' : 'text-gray-400'}`}>
-          {sub}
-        </p>
+        <p className={`text-[11px] mt-1 ${subBg || ''} px-1.5 py-0.5 rounded inline-block ${subBg ? 'text-gray-500' : 'text-gray-400'}`}>{sub}</p>
       )}
     </div>
   );
