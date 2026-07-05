@@ -188,8 +188,8 @@ export async function GET() {
       }
     }
 
-    const turnoLabels: Record<string, string> = { TM: 'Mañana (06:00–09:00)', TT: 'Tarde (10:00–14:00)', TN: 'Noche (18:00–23:00)', OTRO: 'Sin clasificar' };
-    const turnoOrder = ['TM', 'TT', 'TN', 'OTRO'];
+    const turnoLabels: Record<string, string> = { TM: 'Mañana (06:00–09:00)', TT: 'Tarde (10:00–14:00)', TN: 'Noche (18:00–00:00)' };
+    const turnoOrder = ['TM', 'TT', 'TN'];
 
     const rankingPorTurno: TurnoRanking[] = turnoOrder
       .filter(t => turnoRankingMap.has(t))
@@ -210,13 +210,15 @@ export async function GET() {
         return { turno: t, label: turnoLabels[t], totalFueraSegundos: totalFuera, totalFuera: secondsToTime(totalFuera), eventosCount: totalEventos, empleados };
       });
 
-    // Also build a flat ranking (all turnos combined)
+    // Also build a flat ranking (only TM, TT, TN — exclude OTRO)
+    const validTurnos = new Set(['TM', 'TT', 'TN']);
     const allRankingMap = new Map<number, {
       codigoEmp: number; nombre: string; empresa: string; sector: string;
       totalFueraSegundos: number; dias: Set<string>; diasConFuera: number[];
       maxDia: { seg: number; fecha: string }; eventosCount: number;
     }>();
-    for (const [, turnoMap] of turnoRankingMap) {
+    for (const [turnoKey, turnoMap] of turnoRankingMap) {
+      if (!validTurnos.has(turnoKey)) continue;
       for (const [, v] of turnoMap) {
         if (!allRankingMap.has(v.codigoEmp)) {
           allRankingMap.set(v.codigoEmp, { ...v, dias: new Set(v.dias), diasConFuera: [...v.diasConFuera], eventosCount: v.eventosCount });

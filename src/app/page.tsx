@@ -70,8 +70,9 @@ const turnoMeta: Record<string, { label: string; icon: typeof Sun; bg: string; t
   TM: { label: 'Mañana', icon: Sun, bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
   TT: { label: 'Tarde', icon: Sunset, bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200' },
   TN: { label: 'Noche', icon: Moon, bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
-  OTRO: { label: 'Sin clasificar', icon: Clock, bg: 'bg-gray-50', text: 'text-gray-600', border: 'border-gray-200' },
 };
+
+const DEFAULT_TURNO_META = { label: '—', icon: Clock, bg: 'bg-gray-50', text: 'text-gray-400', border: 'border-gray-200' };
 
 /* ═══════════════════════════════════════
    TOAST NOTIFICATION
@@ -385,8 +386,8 @@ export default function Home() {
                         const pos = idx + 1;
                         const rankBadge = pos <= 3 ? 'bg-red-500' : pos <= 7 ? 'bg-orange-400' : '';
                         const rowBg = pos <= 3 ? 'bg-red-50/40' : '';
-                        const empTurno = empTurnoMap.get(emp.codigoEmp) || 'OTRO';
-                        const tMeta = turnoMeta[empTurno] || turnoMeta.OTRO;
+                        const empTurno = empTurnoMap.get(emp.codigoEmp) || '';
+                        const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
                         const TurnoIcon = tMeta.icon;
 
                         return (
@@ -430,7 +431,7 @@ export default function Home() {
                 <h2 className="text-sm font-bold text-gray-800 mb-3">Por Turno</h2>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {filteredTurnoCards.map(tr => {
-                    const tm = turnoMeta[tr.turno] || turnoMeta.OTRO;
+                    const tm = turnoMeta[tr.turno] || DEFAULT_TURNO_META;
                     const TIcon = tm.icon;
                     return (
                       <div key={tr.turno} className={`rounded-xl border ${tm.border} ${tm.bg} p-4 cursor-pointer hover:shadow-md transition-shadow`}
@@ -466,8 +467,8 @@ export default function Home() {
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-gray-400">{empDays.reduce((s, d) => s + d.tiemposFuera.length, 0)} salidas</span>
-                  <span className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full ${(turnoMeta[profileEmp.turno] || turnoMeta.OTRO).bg} ${(turnoMeta[profileEmp.turno] || turnoMeta.OTRO).text}`}>
-                    {(() => { const TIcon = (turnoMeta[profileEmp.turno] || turnoMeta.OTRO).icon; return <TIcon className="h-3 w-3" />; })()}
+                  <span className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full ${(turnoMeta[profileEmp.turno] || DEFAULT_TURNO_META).bg} ${(turnoMeta[profileEmp.turno] || DEFAULT_TURNO_META).text}`}>
+                    {(() => { const TIcon = (turnoMeta[profileEmp.turno] || DEFAULT_TURNO_META).icon; return <TIcon className="h-3 w-3" />; })()}
                     {profileEmp.turno}
                   </span>
                 </div>
