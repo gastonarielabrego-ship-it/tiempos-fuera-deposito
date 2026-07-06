@@ -312,11 +312,21 @@ export default function Home() {
       if (r.ok) {
         const blob = await r.blob();
         const url = URL.createObjectURL(blob);
-        window.open(url, '_blank');
-        URL.revokeObjectURL(url);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Pedido_Explicacion.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      } else {
+        const err = await r.json().catch(() => ({}));
+        showToast(err.error || 'Error al generar PDF', 'error');
       }
-    } catch { /* silent */ }
-  }, []);
+    } catch {
+      showToast('Error de conexion al generar PDF', 'error');
+    }
+  }, [showToast]);
 
   const deleteSancion = useCallback(async (id: string) => {
     try {
