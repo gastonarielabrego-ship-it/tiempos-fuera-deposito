@@ -1,0 +1,755 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+     4→import { Button } from '@/components/ui/button';
+     5→import { Input } from '@/components/ui/input';
+     6→import { Skeleton } from '@/components/ui/skeleton';
+     7→
+     8→import {
+     9→  Upload, RefreshCw, Clock, Users,
+    10→  FileSpreadsheet, Search, Sun, Sunset, Moon,
+    11→  AlertTriangle, CheckCircle2, XCircle, Coffee,
+    12→} from 'lucide-react';
+    13→
+    14→/* ═══════════════════════════════════════
+    15→   TYPES
+    16→   ═══════════════════════════════════════ */
+    17→
+    18→interface TimeOutPair { salida: string; entrada: string; duracionSegundos: number; duracion: string; }
+    19→interface AccesoEvento { hora: string; terminal: string; }
+    20→
+    21→interface EmployeeDay {
+    22→  codigoEmp: number; nombre: string; fecha: string; jornada: string; sector: string; empresa: string;
+    23→  turno: string; tiemposFuera: TimeOutPair[]; totalFueraSegundos: number; totalFuera: string;
+    24→  comidasHoras: string[]; facialRegistros: { hora: string; zona: string }[];
+    25→  accesosEventos: AccesoEvento[];
+    26→}
+    27→
+    28→interface RankingEntry {
+    29→  codigoEmp: number; nombre: string; empresa: string; sector: string;
+    30→  totalFueraSegundos: number; totalFuera: string;
+    31→  diasCount: number; avgPorDia: string; maxDiaFuera: string; maxDiaFecha: string;
+    32→  eventosCount: number;
+    33→}
+    34→
+    35→interface TurnoRanking { turno: string; label: string; totalFueraSegundos: number; totalFuera: string; eventosCount: number; empleados: RankingEntry[]; }
+    36→
+    37→interface Summary {
+    38→  totalEmployees: number; totalRecords: number; totalComidas: number;
+    39→  totalFacial: number; avgOutsidePerEmployee: string; dates: string[];
+    40→}
+    41→
+    42→interface DashboardData {
+    43→  employees: EmployeeDay[]; ranking: RankingEntry[];
+    44→  rankingPorTurno: TurnoRanking[]; turnos: string[]; summary: Summary;
+    45→}
+    46→
+    47→/* ═══════════════════════════════════════
+    48→   HELPERS
+    49→   ═══════════════════════════════════════ */
+    50→
+    51→const timeToS = (t: string) => {
+    52→  if (!t) return 0;
+    53→  const p = t.split(':');
+    54→  return (Number(p[0]) || 0) * 3600 + (Number(p[1]) || 0) * 60 + (Number(p[2]) || 0);
+    55→};
+    56→
+    57→const formatHMS = (s: number) => {
+    58→  const h = Math.floor(s / 3600);
+    59→  const m = Math.floor((s % 3600) / 60);
+    60→  const sec = s % 60;
+    61→  return `${h}h ${m}m ${sec}s`;
+    62→};
+    63→
+    64→const durTextColor = (s: number) => s <= 1800 ? 'text-emerald-600' : s <= 3600 ? 'text-amber-600' : 'text-red-600';
+    65→
+    66→const turnoMeta: Record<string, { label: string; icon: typeof Sun; bg: string; text: string; border: string }> = {
+    67→  TM: { label: 'Mañana', icon: Sun, bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+    68→  TT: { label: 'Tarde', icon: Sunset, bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200' },
+    69→  TN: { label: 'Noche', icon: Moon, bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+    70→};
+    71→
+    72→const DEFAULT_TURNO_META = { label: '—', icon: Clock, bg: 'bg-gray-50', text: 'text-gray-400', border: 'border-gray-200' };
+    73→
+    74→/* ═══════════════════════════════════════
+    75→   TOAST NOTIFICATION
+    76→   ═══════════════════════════════════════ */
+    77→
+    78→function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
+    79→  useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
+    80→  const Icon = type === 'success' ? CheckCircle2 : XCircle;
+    81→  const bg = type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700';
+    82→  return (
+    83→    <div className={`fixed bottom-4 right-4 z-[100] flex items-center gap-2 px-4 py-3 rounded-lg border shadow-lg text-sm font-medium animate-in slide-in-from-bottom-2 ${bg}`}>
+    84→      <Icon className="h-4 w-4 shrink-0" />
+    85→      <span>{message}</span>
+    86→      <button onClick={onClose} className="ml-2 opacity-50 hover:opacity-100"><XCircle className="h-3.5 w-3.5" /></button>
+    87→    </div>
+    88→  );
+    89→}
+    90→
+    91→/* ═══════════════════════════════════════
+    92→   MAIN PAGE
+    93→   ═══════════════════════════════════════ */
+    94→
+    95→export default function Home() {
+    96→  const [data, setData] = useState<DashboardData | null>(null);
+    97→  const [loading, setLoading] = useState(true);
+    98→  const [error, setError] = useState<string | null>(null);
+    99→  const [uploading, setUploading] = useState<string | null>(null);
+   100→  const [search, setSearch] = useState('');
+   101→  const [filterTurno, setFilterTurno] = useState('all');
+   102→  const [activeTab, setActiveTab] = useState<'ranking' | 'desayuno' | 'break-tarde' | 'break-noche'>('ranking');
+   103→  const [showUpload, setShowUpload] = useState(false);
+   104→
+   105→  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+   106→  const fileInputsRef = useRef<Record<string, HTMLInputElement | null>>({});
+   107→
+   108→  const showToast = useCallback((message: string, type: 'success' | 'error') => {
+   109→    setToast({ message, type });
+   110→  }, []);
+   111→
+   112→  const fetchData = useCallback(async () => {
+   113→    setLoading(true);
+   114→    setError(null);
+   115→    try {
+   116→      const r = await window.fetch('/api/dashboard');
+   117→      if (r.ok) {
+   118→        const json = await r.json();
+   119→        setData(json);
+   120→        if (json.error) setError(json.error);
+   121→      } else {
+   122→        const text = await r.text().catch(() => 'Error desconocido');
+   123→        setError(`Error del servidor (${r.status}): ${text}`);
+   124→      }
+   125→    } catch (e) {
+   126→      const msg = e instanceof Error ? e.message : 'Error de conexión';
+   127→      setError(msg);
+   128→    } finally {
+   129→      setLoading(false);
+   130→    }
+   131→  }, []);
+   132→
+   133→  useEffect(() => { fetchData(); }, [fetchData]);
+   134→
+   135→  const upload = async (ep: string, label: string, file: File) => {
+   136→    setUploading(ep);
+   137→    setShowUpload(false);
+   138→    try {
+   139→      const fd = new FormData();
+   140→      fd.append('file', file);
+   141→      const r = await window.fetch(ep, { method: 'POST', body: fd });
+   142→      if (r.ok) {
+   143→        const json = await r.json().catch(() => null);
+   144→        showToast(`${label}: ${json?.count ?? 0} registros cargados`, 'success');
+   145→        await fetchData();
+   146→      } else {
+   147→        const text = await r.text().catch(() => 'Error desconocido');
+   148→        showToast(`${label}: ${text}`, 'error');
+   149→      }
+   150→    } catch (e) {
+   151→      showToast(`${label}: Error de conexión`, 'error');
+   152→    } finally {
+   153→      setUploading(null);
+   154→    }
+   155→  };
+   156→
+   157→  const triggerFileInput = (ep: string) => {
+   158→    fileInputsRef.current[ep]?.click();
+   159→  };
+   160→
+   161→  /* ── Derived data ── */
+   162→
+   163→  // Build map: codigoEmp -> primary turno (most frequent turno across all their days)
+   164→  const empTurnoMap = useMemo(() => {
+   165→    if (!data) return new Map<number, string>();
+   166→    const map = new Map<number, Map<string, number>>();
+   167→    for (const ed of data.employees) {
+   168→      if (!map.has(ed.codigoEmp)) map.set(ed.codigoEmp, new Map());
+   169→      const turnoCounts = map.get(ed.codigoEmp)!;
+   170→      turnoCounts.set(ed.turno, (turnoCounts.get(ed.turno) || 0) + 1);
+   171→    }
+   172→    const result = new Map<number, string>();
+   173→    for (const [codigo, turnoCounts] of map) {
+   174→      let best = 'OTRO', bestCount = 0;
+   175→      for (const [t, c] of turnoCounts) { if (c > bestCount) { best = t; bestCount = c; } }
+   176→      result.set(codigo, best);
+   177→    }
+   178→    return result;
+   179→  }, [data]);
+   180→
+   181→  const filteredRanking = useMemo(() => {
+   182→    if (!data) return [];
+   183→    return data.ranking.filter(e => {
+   184→      const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || String(e.codigoEmp).includes(search);
+   185→      const empTurno = empTurnoMap.get(e.codigoEmp) || 'OTRO';
+   186→      const matchTurno = filterTurno === 'all' || empTurno === filterTurno;
+   187→      return matchSearch && matchTurno;
+   188→    });
+   189→  }, [data, search, filterTurno, empTurnoMap]);
+   190→
+   191→  const filteredTurnoCards = useMemo(() => {
+   192→    if (!data) return [];
+   193→    return data.rankingPorTurno.filter(tr => tr.empleados.length > 0);
+   194→  }, [data]);
+   195→
+   196→  const openProfile = (codigo: number) => {
+   197→    window.location.href = `/operator/${codigo}`;
+   198→  };
+   199→
+   200→  /* ── Generic Exceso builder ── */
+   201→  interface ExcesoEntry {
+   202→    codigoEmp: number; nombre: string; empresa: string; sector: string;
+   203→    totalFueraSegundos: number; dias: Set<string>; eventos: { fecha: string; salida: string; entrada: string; duracion: string; duracionSegundos: number }[];
+   204→  }
+   205→
+   206→  const buildExcesoRanking = useCallback((salidaMinSeg: number, salidaMaxSeg: number, minDurSeg: number): ExcesoEntry[] => {
+   207→    if (!data) return [];
+   208→    const map = new Map<number, ExcesoEntry>();
+   209→    for (const emp of data.employees) {
+   210→      for (const tf of emp.tiemposFuera) {
+   211→        const salidaSeg = timeToS(tf.salida);
+   212→        const inWindow = salidaSeg >= salidaMinSeg && salidaSeg <= salidaMaxSeg;
+   213→        const isExcess = tf.duracionSegundos > minDurSeg;
+   214→        if (inWindow && isExcess) {
+   215→          if (!map.has(emp.codigoEmp)) {
+   216→            map.set(emp.codigoEmp, { codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector, totalFueraSegundos: 0, dias: new Set(), eventos: [] });
+   217→          }
+   218→          const entry = map.get(emp.codigoEmp)!;
+   219→          entry.totalFueraSegundos += tf.duracionSegundos;
+   220→          entry.dias.add(emp.fecha);
+   221→          entry.eventos.push({ fecha: emp.fecha, salida: tf.salida, entrada: tf.entrada, duracion: tf.duracion, duracionSegundos: tf.duracionSegundos });
+   222→        }
+   223→      }
+   224→    }
+   225→    return Array.from(map.values()).sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos);
+   226→  }, [data]);
+   227→
+   228→  /* ── Exceso Desayuno: 06:45–09:45, >25min ── */
+   229→  const desayunoRanking = useMemo(() => buildExcesoRanking(6*3600+45*60, 9*3600+45*60, 25*60), [buildExcesoRanking]);
+   230→  /* ── Exceso Break Tarde: 16:30–17:30, >15min ── */
+   231→  const breakTardeRanking = useMemo(() => buildExcesoRanking(16*3600+30*60, 17*3600+30*60, 15*60), [buildExcesoRanking]);
+   232→  /* ── Exceso Break Noche: 02:40–03:30, >15min ── */
+   233→  const breakNocheRanking = useMemo(() => buildExcesoRanking(2*3600+40*60, 3*3600+30*60, 15*60), [buildExcesoRanking]);
+   234→
+   235→  const filterExceso = (list: ExcesoEntry[]) => list.filter(e => {
+   236→    const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || String(e.codigoEmp).includes(search);
+   237→    return matchSearch;
+   238→  });
+   239→  const desayunoFiltered = useMemo(() => filterExceso(desayunoRanking), [desayunoRanking, search]);
+   240→  const breakTardeFiltered = useMemo(() => filterExceso(breakTardeRanking), [breakTardeRanking, search]);
+   241→  const breakNocheFiltered = useMemo(() => filterExceso(breakNocheRanking), [breakNocheRanking, search]);
+   242→
+   243→  const excesoStats = (list: ExcesoEntry[]) => ({
+   244→    totalEventos: list.reduce((s, e) => s + e.eventos.length, 0),
+   245→    totalSegundos: list.reduce((s, e) => s + e.totalFueraSegundos, 0),
+   246→    empleadosUnicos: list.length,
+   247→  });
+   248→  const desayunoStats = useMemo(() => excesoStats(desayunoRanking), [desayunoRanking]);
+   249→  const breakTardeStats = useMemo(() => excesoStats(breakTardeRanking), [breakTardeRanking]);
+   250→  const breakNocheStats = useMemo(() => excesoStats(breakNocheRanking), [breakNocheRanking]);
+   251→
+   252→  const totalFueraAll = data?.ranking.reduce((s, e) => s + e.totalFueraSegundos, 0) || 0;
+   253→  const maxFuera = data?.ranking[0];
+   254→  const totalEventos = data?.employees.reduce((s, e) => s + e.tiemposFuera.length, 0) || 0;
+   255→
+   256→  const hasData = data && data.employees.length > 0;
+   257→  const isEmpty = data && data.employees.length === 0 && !error;
+   258→
+   259→  return (
+   260→    <div className="min-h-screen bg-white flex flex-col">
+   261→      {/* ═══════════ HEADER ═══════════ */}
+   262→      <header className="border-b border-gray-200 bg-white sticky top-0 z-50">
+   263→        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+   264→          <h1 className="text-base sm:text-lg font-bold text-gray-800 whitespace-nowrap">Tiempos Fuera de Deposito</h1>
+   265→          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
+   266→            <div className="relative">
+   267→              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+   268→              <Input placeholder="Buscar operador..." value={search} onChange={e => setSearch(e.target.value)}
+   269→                className="pl-8 h-8 w-40 sm:w-52 text-sm border-gray-300" />
+   270→            </div>
+   271→            <select value={filterTurno} onChange={e => setFilterTurno(e.target.value)}
+   272→              className="h-8 text-sm border border-gray-300 rounded-md px-2 bg-white text-gray-600 focus:outline-none">
+   273→              <option value="all">Turno: Todos</option>
+   274→              {data?.turnos.map(t => <option key={t} value={t}>{t} — {turnoMeta[t]?.label || t}</option>)}
+   275→            </select>
+   276→            <Button variant="outline" size="sm" className="h-8 text-sm border-gray-300 text-gray-600"
+   277→              onClick={() => setShowUpload(!showUpload)}>
+   278→              <Upload className="h-3.5 w-3.5 mr-1" /> Cargar
+   279→            </Button>
+   280→            <Button size="sm" className="h-8 bg-red-500 hover:bg-red-600 text-white text-sm"
+   281→              onClick={fetchData} disabled={loading}>
+   282→              <RefreshCw className={`h-3.5 w-3.5 mr-1 ${loading ? 'animate-spin' : ''}`} /> Actualizar
+   283→            </Button>
+   284→          </div>
+   285→        </div>
+   286→
+   287→        {/* Upload dropdown */}
+   288→        {showUpload && (
+   289→          <div className="border-t border-gray-100 bg-gray-50 px-4 sm:px-6 py-3">
+   290→            <div className="max-w-7xl mx-auto flex items-center gap-3 flex-wrap">
+   291→              <span className="text-xs text-gray-500 font-medium">Cargar archivo:</span>
+   292→              {[
+   293→                { label: 'Accesos', ep: '/api/upload-accesos' },
+   294→                { label: 'Comidas (TK)', ep: '/api/upload-comidas' },
+   295→                { label: 'Facial', ep: '/api/upload-facial' },
+   296→              ].map(({ label, ep }) => (
+   297→                <Button key={ep} variant="outline" size="sm" className="h-8 text-xs border-gray-300 text-gray-600"
+   298→                  disabled={uploading !== null}
+   299→                  onClick={() => triggerFileInput(ep)}>
+   300→                  {uploading === ep ? (
+   301→                    <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
+   302→                  ) : (
+   303→                    <FileSpreadsheet className="h-3 w-3 mr-1.5 text-gray-400" />
+   304→                  )}
+   305→                  {label}
+   306→                </Button>
+   307→              ))}
+   308→              <input
+   309→                key="/api/upload-accesos"
+   310→                ref={el => { fileInputsRef.current['/api/upload-accesos'] = el; }}
+   311→                type="file" accept=".xlsx,.xls" className="hidden"
+   312→                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-accesos', 'Accesos', f); e.target.value = ''; }} />
+   313→              <input
+   314→                key="/api/upload-comidas"
+   315→                ref={el => { fileInputsRef.current['/api/upload-comidas'] = el; }}
+   316→                type="file" accept=".xlsx,.xls" className="hidden"
+   317→                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-comidas', 'Comidas', f); e.target.value = ''; }} />
+   318→              <input
+   319→                key="/api/upload-facial"
+   320→                ref={el => { fileInputsRef.current['/api/upload-facial'] = el; }}
+   321→                type="file" accept=".xlsx,.xls" className="hidden"
+   322→                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-facial', 'Facial', f); e.target.value = ''; }} />
+   323→              <span className="text-[10px] text-gray-400 ml-2">Se sobreescribe con cada carga</span>
+   324→            </div>
+   325→          </div>
+   326→        )}
+   327→      </header>
+   328→
+   329→      {/* ═══════════ MAIN ═══════════ */}
+   330→      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-5 space-y-4">
+   331→
+   332→        {/* ── Error state ── */}
+   333→        {error && !loading && (
+   334→          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+   335→            <XCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+   336→            <div>
+   337→              <p className="text-sm font-semibold text-red-700">Error de conexión con la base de datos</p>
+   338→              <p className="text-xs text-red-500 mt-1">{error}</p>
+   339→              <p className="text-xs text-red-400 mt-2">Verificá que la variable DATABASE_URL esté configurada en Vercel.</p>
+   340→            </div>
+   341→          </div>
+   342→        )}
+   343→
+   344→        {/* ── Loading ── */}
+   345→        {loading && !error && (
+   346→          <div className="space-y-3">
+   347→            <Skeleton className="h-4 w-48" />
+   348→            <Skeleton className="h-10 w-full" />
+   349→            <Skeleton className="h-10 w-full" />
+   350→            <Skeleton className="h-10 w-full" />
+   351→          </div>
+   352→        )}
+   353→
+   354→        {/* ── Empty state (no data yet) ── */}
+   355→        {isEmpty && (
+   356→          <div className="text-center py-20">
+   357→            <FileSpreadsheet className="h-16 w-16 mx-auto text-gray-200 mb-4" />
+   358→            <p className="text-gray-500 text-base font-medium">No hay datos cargados</p>
+   359→            <p className="text-gray-400 text-sm mt-1">Usá el botón &quot;Cargar&quot; de arriba para subir los archivos Excel</p>
+   360→            <div className="flex items-center justify-center gap-2 mt-4">
+   361→              <Button variant="outline" size="sm" onClick={() => triggerFileInput('/api/upload-accesos')}
+   362→                className="text-sm">
+   363→                <FileSpreadsheet className="h-4 w-4 mr-2" /> Cargar Accesos
+   364→              </Button>
+   365→            </div>
+   366→          </div>
+   367→        )}
+   368→
+   369→        {/* ══════════════════════════════════════
+   370→            CONTENT (has data)
+   371→            ══════════════════════════════════════ */}
+   372→        {hasData && !loading && (
+   373→          <>
+   374→            {/* ── Tabs ── */}
+   375→            <div className="flex items-center gap-0.5 border-b border-gray-200 overflow-x-auto">
+   376→              <button onClick={() => setActiveTab('ranking')}
+   377→                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'ranking' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+   378→                Ranking General
+   379→              </button>
+   380→              <button onClick={() => setActiveTab('desayuno')}
+   381→                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'desayuno' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+   382→                <Coffee className="h-3.5 w-3.5" /> Exceso Desayuno
+   383→              </button>
+   384→              <button onClick={() => setActiveTab('break-tarde')}
+   385→                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'break-tarde' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+   386→                <Sunset className="h-3.5 w-3.5" /> Break Tarde
+   387→              </button>
+   388→              <button onClick={() => setActiveTab('break-noche')}
+   389→                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'break-noche' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+   390→                <Moon className="h-3.5 w-3.5" /> Break Noche
+   391→              </button>
+   392→            </div>
+   393→
+   394→            {/* ═══════════ TAB: RANKING GENERAL ═══════════ */}
+   395→            {activeTab === 'ranking' && (
+   396→              <div className="space-y-4 pt-1">
+   397→                {/* ── Metric Cards ── */}
+   398→                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+   399→                  <MetricCard icon={<Users className="h-5 w-5 text-blue-500" />} label="Total Empleados" value={String(data.summary.totalEmployees)} accent="border-l-blue-500" />
+   400→                  <MetricCard icon={<Clock className="h-5 w-5 text-red-500" />} label="Suma Tiempos Fuera" value={formatHMS(totalFueraAll)} sub={`${totalEventos} eventos`} accent="border-l-red-500" subBg="bg-red-50" />
+   401→                  <MetricCard icon={<AlertTriangle className="h-5 w-5 text-amber-500" />} label="Promedio por Empleado" value={data.summary.avgOutsidePerEmployee} accent="border-l-amber-500" />
+   402→                  <MetricCard icon={<Clock className="h-5 w-5 text-orange-500" />} label="Mayor Tiempo Fuera" value={maxFuera ? maxFuera.totalFuera : '00:00:00'} sub={maxFuera ? maxFuera.nombre : ''} accent="border-l-orange-500" />
+   403→                </div>
+   404→
+   405→                {/* ── Summary bar ── */}
+   406→                <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-2.5 flex items-center gap-6 flex-wrap">
+   407→                  <div className="flex items-center gap-1.5 text-red-600">
+   408→                    <AlertTriangle className="h-4 w-4" />
+   409→                    <span className="text-xs font-semibold uppercase tracking-wider">Resumen</span>
+   410→                  </div>
+   411→                  <span className="text-sm"><b className="text-red-600">{totalEventos}</b> <span className="text-gray-500">salidas</span></span>
+   412→                  <span className="text-sm"><b className="text-red-600">{formatHMS(totalFueraAll)}</b> <span className="text-gray-500">suma total</span></span>
+   413→                  <span className="text-sm"><b className="text-red-600">{data.summary.totalEmployees}</b> <span className="text-gray-500">empleados</span></span>
+   414→                </div>
+   415→
+   416→                {/* ── Ranking table ── */}
+   417→                <div>
+   418→                  <div className="flex items-center justify-between mb-3">
+   419→                    <h2 className="text-sm font-bold text-gray-800">Ranking por Tiempo Fuera de Deposito</h2>
+   420→                    <span className="text-xs text-gray-400">{filteredRanking.length} operadores</span>
+   421→                  </div>
+   422→
+   423→                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+   424→                    <div className="overflow-x-auto">
+   425→                      <table className="w-full text-sm">
+   426→                        <thead>
+   427→                          <tr className="bg-gray-50 text-left">
+   428→                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
+   429→                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+   430→                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-20">Turno</th>
+   431→                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-32">T. Fuera Deposito</th>
+   432→                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Prom/Dia</th>
+   433→                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Dias</th>
+   434→                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Mayor Dia</th>
+   435→                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-16">Eventos</th>
+   436→                          </tr>
+   437→                        </thead>
+   438→                        <tbody className="divide-y divide-gray-100">
+   439→                          {filteredRanking.map((emp, idx) => {
+   440→                            const pos = idx + 1;
+   441→                            const rankBadge = pos <= 3 ? 'bg-red-500' : pos <= 7 ? 'bg-orange-400' : '';
+   442→                            const rowBg = pos <= 3 ? 'bg-red-50/40' : '';
+   443→                            const empTurno = empTurnoMap.get(emp.codigoEmp) || '';
+   444→                            const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
+   445→                            const TurnoIcon = tMeta.icon;
+   446→
+   447→                            return (
+   448→                              <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-gray-50 cursor-pointer transition-colors`}
+   449→                                onClick={() => openProfile(emp.codigoEmp)}>
+   450→                                <td className="px-3 py-3">
+   451→                                  {rankBadge ? (
+   452→                                    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
+   453→                                  ) : (
+   454→                                    <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
+   455→                                  )}
+   456→                                </td>
+   457→                                <td className="px-3 py-3">
+   458→                                  <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
+   459→                                  <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
+   460→                                </td>
+   461→                                <td className="px-3 py-3">
+   462→                                  <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
+   463→                                    <TurnoIcon className="h-3 w-3" /> {empTurno}
+   464→                                  </span>
+   465→                                </td>
+   466→                                <td className="px-3 py-3 text-right">
+   467→                                  <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>{emp.totalFuera}</span>
+   468→                                </td>
+   469→                                <td className="px-3 py-3 text-right"><span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span></td>
+   470→                                <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
+   471→                                <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
+   472→                                <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.eventosCount}</span></td>
+   473→                              </tr>
+   474→                            );
+   475→                          })}
+   476→                        </tbody>
+   477→                      </table>
+   478→                    </div>
+   479→                  </div>
+   480→                </div>
+   481→
+   482→                {/* ── Por Turno cards ── */}
+   483→                {filteredTurnoCards.length > 0 && (
+   484→                  <div>
+   485→                    <h2 className="text-sm font-bold text-gray-800 mb-3">Por Turno</h2>
+   486→                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+   487→                      {filteredTurnoCards.map(tr => {
+   488→                        const tm = turnoMeta[tr.turno] || DEFAULT_TURNO_META;
+   489→                        const TIcon = tm.icon;
+   490→                        return (
+   491→                          <div key={tr.turno} className={`rounded-xl border ${tm.border} ${tm.bg} p-4 cursor-pointer hover:shadow-md transition-shadow`}
+   492→                            onClick={() => { setFilterTurno(tr.turno); }}>
+   493→                            <div className="flex items-center gap-2 mb-1">
+   494→                              <TIcon className={`h-4 w-4 ${tm.text}`} />
+   495→                              <span className={`text-sm font-bold ${tm.text}`}>{tr.turno}</span>
+   496→                              <span className="text-[10px] text-gray-400">{tm.label}</span>
+   497→                            </div>
+   498→                            <p className={`text-xl font-black font-mono ${tm.text}`}>{tr.totalFuera}</p>
+   499→                            <p className="text-xs text-gray-500 mt-1">{tr.eventosCount} eventos &middot; {tr.empleados.length} operadores</p>
+   500→                          </div>
+   501→                        );
+   502→                      })}
+   503→                    </div>
+   504→                  </div>
+   505→                )}
+   506→              </div>
+   507→            )}
+   508→
+   509→            {/* ═══════════ TAB: EXCESO DESAYUNO ═══════════ */}
+   510→            {activeTab === 'desayuno' && (
+   511→              <ExcesoTabContent
+   512→                title="Exceso de Desayuno"
+   513→                description="Salidas entre 06:45 y 09:45 hs con duracion mayor a 25 minutos"
+   514→                icon={<Coffee className="h-5 w-5 text-orange-500 shrink-0" />}
+   515→                iconSmall={<Coffee className="h-4 w-4" />}
+   516→                colorClass="orange"
+   517→                filtered={desayunoFiltered}
+   518→                stats={desayunoStats}
+   519→                openProfile={openProfile}
+   520→              />
+   521→            )}
+   522→
+   523→            {/* ═══════════ TAB: BREAK TARDE ═══════════ */}
+   524→            {activeTab === 'break-tarde' && (
+   525→              <ExcesoTabContent
+   526→                title="Exceso Break Tarde"
+   527→                description="Salidas entre 16:30 y 17:30 hs con duracion mayor a 15 minutos"
+   528→                icon={<Sunset className="h-5 w-5 text-purple-500 shrink-0" />}
+   529→                iconSmall={<Sunset className="h-4 w-4" />}
+   530→                colorClass="purple"
+   531→                filtered={breakTardeFiltered}
+   532→                stats={breakTardeStats}
+   533→                openProfile={openProfile}
+   534→              />
+   535→            )}
+   536→
+   537→            {/* ═══════════ TAB: BREAK NOCHE ═══════════ */}
+   538→            {activeTab === 'break-noche' && (
+   539→              <ExcesoTabContent
+   540→                title="Exceso Break Noche"
+   541→                description="Salidas entre 02:40 y 03:30 hs con duracion mayor a 15 minutos"
+   542→                icon={<Moon className="h-5 w-5 text-blue-500 shrink-0" />}
+   543→                iconSmall={<Moon className="h-4 w-4" />}
+   544→                colorClass="blue"
+   545→                filtered={breakNocheFiltered}
+   546→                stats={breakNocheStats}
+   547→                openProfile={openProfile}
+   548→              />
+   549→            )}
+   550→          </>
+   551→        )}
+   552→      </main>
+   553→
+   554→
+   555→
+   556→      {/* Toast notification */}
+   557→      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+   558→    </div>
+   559→  );
+   560→}
+   561→
+   562→
+   563→
+   564→/* ═══════════════════════════════════════
+   565→   EXCESO TAB CONTENT (reusable)
+   566→   ═══════════════════════════════════════ */
+   567→
+   568→const COLOR_MAP: Record<string, { bg: string; border: string; text: string; badge1: string; badge2: string; rowBg: string; hoverBg: string; headerBg: string }> = {
+   569→  orange: {
+   570→    bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', badge1: 'bg-orange-500', badge2: 'bg-amber-400',
+   571→    rowBg: 'bg-orange-50/40', hoverBg: 'hover:bg-orange-50/30', headerBg: 'bg-orange-50',
+   572→  },
+   573→  purple: {
+   574→    bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', badge1: 'bg-purple-500', badge2: 'bg-purple-300',
+   575→    rowBg: 'bg-purple-50/40', hoverBg: 'hover:bg-purple-50/30', headerBg: 'bg-purple-50',
+   576→  },
+   577→  blue: {
+   578→    bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', badge1: 'bg-blue-500', badge2: 'bg-blue-300',
+   579→    rowBg: 'bg-blue-50/40', hoverBg: 'hover:bg-blue-50/30', headerBg: 'bg-blue-50',
+   580→  },
+   581→};
+   582→
+   583→function ExcesoTabContent({ title, description, icon, iconSmall, colorClass, filtered, stats, openProfile }: {
+   584→  title: string; description: string; icon: React.ReactNode; iconSmall: React.ReactNode;
+   585→  colorClass: string; filtered: { codigoEmp: number; nombre: string; empresa: string; totalFueraSegundos: number; dias: Set<string>; eventos: { fecha: string; salida: string; entrada: string; duracion: string; duracionSegundos: number }[] }[];
+   586→  stats: { totalEventos: number; totalSegundos: number; empleadosUnicos: number };
+   587→  openProfile: (c: number) => void;
+   588→}) {
+   589→  const c = COLOR_MAP[colorClass] || COLOR_MAP.orange;
+   590→  const maxAllEvento = filtered.length > 0
+   591→    ? [...filtered.flatMap(e => e.eventos)].sort((a, b) => b.duracionSegundos - a.duracionSegundos)[0]
+   592→    : null;
+   593→
+   594→  return (
+   595→    <div className="space-y-4 pt-1">
+   596→      {/* Info banner */}
+   597→      <div className={`${c.bg} border ${c.border} rounded-lg px-4 py-3 flex items-center gap-3`}>
+   598→        {icon}
+   599→        <div>
+   600→          <p className={`text-sm font-semibold ${c.text}`}>{title}</p>
+   601→          <p className="text-xs opacity-70 mt-0.5">{description}</p>
+   602→        </div>
+   603→      </div>
+   604→
+   605→      {/* Metric cards */}
+   606→      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+   607→        <MetricCard icon={<Users className={`h-5 w-5 ${c.text}`} />} label="Empleados con Exceso" value={String(stats.empleadosUnicos)} accent={`border-l-current ${c.text}`} />
+   608→        <MetricCard icon={<Clock className="h-5 w-5 text-red-500" />} label="Suma Excesos" value={formatHMS(stats.totalSegundos)} sub={`${stats.totalEventos} eventos`} accent="border-l-red-500" subBg="bg-red-50" />
+   609→        <MetricCard icon={iconSmall} label="Promedio por Empleado" value={stats.empleadosUnicos > 0 ? formatHMS(Math.round(stats.totalSegundos / stats.empleadosUnicos)) : '0h 0m 0s'} accent={`border-l-amber-500`} />
+   610→        <MetricCard icon={<AlertTriangle className="h-5 w-5 text-red-600" />} label="Mayor Exceso" value={maxAllEvento?.duracion || '00:00:00'} sub={maxAllEvento ? `${filtered.find(e => e.eventos.includes(maxAllEvento))?.nombre || ''} ${maxAllEvento.fecha}` : ''} accent="border-l-red-600" />
+   611→      </div>
+   612→
+   613→      {/* Summary bar */}
+   614→      <div className={`${c.bg} border ${c.border} rounded-lg px-4 py-2.5 flex items-center gap-6 flex-wrap`}>
+   615→        <div className={`flex items-center gap-1.5 ${c.text}`}>
+   616→          {iconSmall}
+   617→          <span className="text-xs font-semibold uppercase tracking-wider">{title}</span>
+   618→        </div>
+   619→        <span className="text-sm"><b className={c.text}>{stats.totalEventos}</b> <span className="text-gray-500">excesos</span></span>
+   620→        <span className="text-sm"><b className={c.text}>{formatHMS(stats.totalSegundos)}</b> <span className="text-gray-500">suma total</span></span>
+   621→        <span className="text-sm"><b className={c.text}>{stats.empleadosUnicos}</b> <span className="text-gray-500">empleados</span></span>
+   622→      </div>
+   623→
+   624→      {/* Ranking table */}
+   625→      <div>
+   626→        <div className="flex items-center justify-between mb-3">
+   627→          <h2 className="text-sm font-bold text-gray-800">Ranking {title}</h2>
+   628→          <span className="text-xs text-gray-400">{filtered.length} operadores</span>
+   629→        </div>
+   630→
+   631→        {filtered.length === 0 ? (
+   632→          <div className="text-center py-12 border border-gray-200 rounded-lg">
+   633→            {iconSmall}
+   634→            <p className="text-gray-400 text-sm mt-2">No hay excesos registrados</p>
+   635→          </div>
+   636→        ) : (
+   637→          <div className="border border-gray-200 rounded-lg overflow-hidden">
+   638→            <div className="overflow-x-auto">
+   639→              <table className="w-full text-sm">
+   640→                <thead>
+   641→                  <tr className={`${c.headerBg} text-left`}>
+   642→                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} w-12`}>#</th>
+   643→                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text}`}>Operador</th>
+   644→                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} text-right w-32`}>T. Exceso Total</th>
+   645→                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} text-right w-20`}>Dias</th>
+   646→                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} text-right w-20`}>Eventos</th>
+   647→                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} text-right w-28`}>Mayor Exceso</th>
+   648→                  </tr>
+   649→                </thead>
+   650→                <tbody className="divide-y divide-gray-100">
+   651→                  {filtered.map((emp, idx) => {
+   652→                    const pos = idx + 1;
+   653→                    const rankBadge = pos <= 3 ? c.badge1 : pos <= 7 ? c.badge2 : '';
+   654→                    const rowBg = pos <= 3 ? c.rowBg : '';
+   655→                    const maxEvento = [...emp.eventos].sort((a, b) => b.duracionSegundos - a.duracionSegundos)[0];
+   656→
+   657→                    return (
+   658→                      <tr key={emp.codigoEmp} className={`${rowBg} ${c.hoverBg} cursor-pointer transition-colors`}
+   659→                        onClick={() => openProfile(emp.codigoEmp)}>
+   660→                        <td className="px-3 py-3">
+   661→                          {rankBadge ? (
+   662→                            <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
+   663→                          ) : (
+   664→                            <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
+   665→                          )}
+   666→                        </td>
+   667→                        <td className="px-3 py-3">
+   668→                          <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
+   669→                          <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
+   670→                        </td>
+   671→                        <td className="px-3 py-3 text-right">
+   672→                          <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>{formatHMS(emp.totalFueraSegundos)}</span>
+   673→                        </td>
+   674→                        <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.dias.size}</span></td>
+   675→                        <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.eventos.length}</span></td>
+   676→                        <td className="px-3 py-3 text-right">
+   677→                          <span className={`font-mono text-xs font-bold ${durTextColor(maxEvento?.duracionSegundos ?? 0)}`}>{maxEvento?.duracion || '—'}</span>
+   678→                          {maxEvento && <p className="text-[10px] text-gray-400">{maxEvento.fecha} {maxEvento.salida}-{maxEvento.entrada}</p>}
+   679→                        </td>
+   680→                      </tr>
+   681→                    );
+   682→                  })}
+   683→                </tbody>
+   684→              </table>
+   685→            </div>
+   686→          </div>
+   687→        )}
+   688→      </div>
+   689→
+   690→      {/* Detail table */}
+   691→      {filtered.length > 0 && (
+   692→        <div>
+   693→          <div className="flex items-center justify-between mb-3">
+   694→            <h2 className="text-sm font-bold text-gray-800">Detalle de Todos los Excesos</h2>
+   695→            <span className="text-xs text-gray-400">{stats.totalEventos} registros</span>
+   696→          </div>
+   697→          <div className="border border-gray-200 rounded-lg overflow-hidden">
+   698→            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+   699→              <table className="w-full text-sm">
+   700→                <thead className="sticky top-0">
+   701→                  <tr className="bg-gray-50 text-left">
+   702→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Fecha</th>
+   703→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+   704→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Empresa</th>
+   705→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Salida</th>
+   706→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Entrada</th>
+   707→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right">Duracion</th>
+   708→                  </tr>
+   709→                </thead>
+   710→                <tbody className="divide-y divide-gray-100">
+   711→                  {filtered.flatMap(emp =>
+   712→                    emp.eventos.map(ev => ({ ...ev, nombre: emp.nombre, empresa: emp.empresa, codigoEmp: emp.codigoEmp }))
+   713→                  ).sort((a, b) => b.duracionSegundos - a.duracionSegundos).map((ev, i) => (
+   714→                    <tr key={i} className={`${c.hoverBg} cursor-pointer`} onClick={() => openProfile(ev.codigoEmp)}>
+   715→                      <td className="px-3 py-2 text-gray-600 text-xs">{ev.fecha}</td>
+   716→                      <td className="px-3 py-2"><span className="font-semibold text-gray-800 text-xs">{ev.nombre}</span></td>
+   717→                      <td className="px-3 py-2 text-gray-500 text-xs">{ev.empresa}</td>
+   718→                      <td className="px-3 py-2 text-center font-mono text-xs text-red-600 font-medium">{ev.salida}</td>
+   719→                      <td className="px-3 py-2 text-center font-mono text-xs text-emerald-600 font-medium">{ev.entrada}</td>
+   720→                      <td className="px-3 py-2 text-right">
+   721→                        <span className={`font-mono text-xs font-bold ${durTextColor(ev.duracionSegundos)}`}>{ev.duracion}</span>
+   722→                      </td>
+   723→                    </tr>
+   724→                  ))}
+   725→                </tbody>
+   726→              </table>
+   727→            </div>
+   728→          </div>
+   729→        </div>
+   730→      )}
+   731→    </div>
+   732→  );
+   733→}
+   734→
+   735→/* ═══════════════════════════════════════
+   736→   SUB-COMPONENTS
+   737→   ═══════════════════════════════════════ */
+   738→
+   739→function MetricCard({ icon, label, value, sub, accent, subBg }: {
+   740→  icon: React.ReactNode; label: string; value: string;
+   741→  sub?: string; accent: string; subBg?: string;
+   742→}) {
+   743→  return (
+   744→    <div className={`bg-white border border-gray-200 rounded-lg p-4 border-l-4 ${accent}`}>
+   745→      <div className="flex items-center justify-between mb-1">
+   746→        <span className="text-xs text-gray-500 font-medium">{label}</span>
+   747→        {icon}
+   748→      </div>
+   749→      <p className="text-xl font-black text-gray-800">{value}</p>
+   750→      {sub && (
+   751→        <p className={`text-[11px] mt-1 ${subBg || ''} px-1.5 py-0.5 rounded inline-block ${subBg ? 'text-gray-500' : 'text-gray-400'}`}>{sub}</p>
+   752→      )}
+   753→    </div>
+   754→  );
+   755→}

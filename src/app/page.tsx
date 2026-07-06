@@ -9,6 +9,7 @@ import {
   Upload, RefreshCw, Clock, Users,
   FileSpreadsheet, Search, Sun, Sunset, Moon,
   AlertTriangle, CheckCircle2, XCircle, Coffee,
+  FileText, Printer, Trash2,
 } from 'lucide-react';
 
 /* ═══════════════════════════════════════
@@ -42,6 +43,17 @@ interface Summary {
 interface DashboardData {
   employees: EmployeeDay[]; ranking: RankingEntry[];
   rankingPorTurno: TurnoRanking[]; turnos: string[]; summary: Summary;
+}
+
+interface Sancion {
+  id: string; codigoEmp: number; nombre: string; empresa: string; sector: string;
+  jornada: string; fecha: string; salida: string; entrada: string;
+  duracion: string; duracionSegundos: number; tipo: string; tipoLabel: string;
+  createdAt: string;
+}
+interface SancionStat {
+  codigoEmp: number; nombre: string; empresa: string;
+  totalSanciones: number; ultimaSancion: string;
 }
 
 /* ═══════════════════════════════════════
@@ -99,14 +111,28 @@ export default function Home() {
   const [uploading, setUploading] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filterTurno, setFilterTurno] = useState('all');
-  const [activeTab, setActiveTab] = useState<'ranking' | 'desayuno' | 'break-tarde' | 'break-noche'>('ranking');
+  const [activeTab, setActiveTab] = useState<'ranking' | 'desayuno' | 'break-tarde' | 'break-noche' | 'sanciones'>('ranking');
   const [showUpload, setShowUpload] = useState(false);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const fileInputsRef = useRef<Record<string, HTMLInputElement | null>>({});
 
+  const [sanciones, setSanciones] = useState<Sancion[]>([]);
+  const [sancionStats, setSancionStats] = useState<SancionStat[]>([]);
+
   const showToast = useCallback((message: string, type: 'success' | 'error') => {
     setToast({ message, type });
+  }, []);
+
+  const fetchSanciones = useCallback(async () => {
+    try {
+      const r = await window.fetch('/api/sanciones');
+      if (r.ok) {
+        const json = await r.json();
+        setSanciones(json.sanciones || []);
+        setSancionStats(json.stats || []);
+      }
+    } catch { /* silent */ }
   }, []);
 
   const fetchData = useCallback(async () => {
@@ -118,6 +144,7 @@ export default function Home() {
         const json = await r.json();
         setData(json);
         if (json.error) setError(json.error);
+        else await fetchSanciones();
       } else {
         const text = await r.text().catch(() => 'Error desconocido');
         setError(`Error del servidor (${r.status}): ${text}`);
@@ -128,7 +155,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchSanciones]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -255,6 +282,53 @@ export default function Home() {
 
   const hasData = data && data.employees.length > 0;
   const isEmpty = data && data.employees.length === 0 && !error;
+
+  const generateSancion = useCallback(async (codigoEmp: number, fecha: string, salida: string, entrada: string, duracion: string, duracionSegundos: number, tipo: string) => {
+    try {
+      const tipoLabels: Record<string, string> = {
+        desayuno: 'EXCESO DE DESAYUNO',
+        'break-tarde': 'EXCESO BREAK TARDE',
+        'break-noche': 'EXCESO BREAK NOCHE',
+      };
+      const r = await window.fetch('/api/sanciones', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ codigoEmp, fecha, salida, entrada, duracion, duracionSegundos, tipo, tipoLabel: tipoLabels[tipo] || tipo.toUpperCase() }),
+      });
+      if (r.ok) {
+        showToast('Sancion registrada correctamente', 'success');
+        await fetchSanciones();
+      } else {
+        const err = await r.json().catch(() => ({}));
+        showToast(err.error || 'Error al registrar sancion', 'error');
+      }
+    } catch {
+      showToast('Error de conexion al registrar sancion', 'error');
+    }
+  }, [showToast, fetchSanciones]);
+
+  const printSancion = useCallback(async (id: string) => {
+    try {
+      const r = await window.fetch(`/api/sanciones/${id}/print`);
+      if (r.ok) {
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+        URL.revokeObjectURL(url);
+      }
+    } catch { /* silent */ }
+  }, []);
+
+  const deleteSancion = useCallback(async (id: string) => {
+    try {
+      const r = await window.fetch(`/api/sanciones/${id}`, { method: 'DELETE' });
+      if (r.ok) {
+        showToast('Sancion eliminada', 'success');
+        await fetchSanciones();
+      }
+    } catch {
+      showToast('Error al eliminar sancion', 'error');
+    }
+  }, [showToast, fetchSanciones]);
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
@@ -389,6 +463,10 @@ export default function Home() {
                 className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'break-noche' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
                 <Moon className="h-3.5 w-3.5" /> Break Noche
               </button>
+              <button onClick={() => setActiveTab('sanciones')}
+                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'sanciones' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                <FileText className="h-3.5 w-3.5" /> Sanciones {sanciones.length > 0 && <span className="bg-red-500 text-white text-[10px] rounded-full w-4 h-4 inline-flex items-center justify-center">{sanciones.length}</span>}
+              </button>
             </div>
 
             {/* ═══════════ TAB: RANKING GENERAL ═══════════ */}
@@ -517,6 +595,8 @@ export default function Home() {
                 filtered={desayunoFiltered}
                 stats={desayunoStats}
                 openProfile={openProfile}
+                tipo="desayuno"
+                generateSancion={generateSancion}
               />
             )}
 
@@ -531,6 +611,8 @@ export default function Home() {
                 filtered={breakTardeFiltered}
                 stats={breakTardeStats}
                 openProfile={openProfile}
+                tipo="break-tarde"
+                generateSancion={generateSancion}
               />
             )}
 
@@ -545,6 +627,19 @@ export default function Home() {
                 filtered={breakNocheFiltered}
                 stats={breakNocheStats}
                 openProfile={openProfile}
+                tipo="break-noche"
+                generateSancion={generateSancion}
+              />
+            )}
+
+            {activeTab === 'sanciones' && (
+              <SancionesTabContent
+                sanciones={sanciones}
+                stats={sancionStats}
+                onPrint={printSancion}
+                onDelete={deleteSancion}
+                openProfile={openProfile}
+                loading={loading}
               />
             )}
           </>
@@ -580,11 +675,13 @@ const COLOR_MAP: Record<string, { bg: string; border: string; text: string; badg
   },
 };
 
-function ExcesoTabContent({ title, description, icon, iconSmall, colorClass, filtered, stats, openProfile }: {
+function ExcesoTabContent({ title, description, icon, iconSmall, colorClass, filtered, stats, openProfile, tipo, generateSancion }: {
   title: string; description: string; icon: React.ReactNode; iconSmall: React.ReactNode;
   colorClass: string; filtered: { codigoEmp: number; nombre: string; empresa: string; totalFueraSegundos: number; dias: Set<string>; eventos: { fecha: string; salida: string; entrada: string; duracion: string; duracionSegundos: number }[] }[];
   stats: { totalEventos: number; totalSegundos: number; empleadosUnicos: number };
   openProfile: (c: number) => void;
+  tipo: string;
+  generateSancion: (c: number, f: string, s: string, e: string, d: string, ds: number, t: string) => void;
 }) {
   const c = COLOR_MAP[colorClass] || COLOR_MAP.orange;
   const maxAllEvento = filtered.length > 0
@@ -705,6 +802,7 @@ function ExcesoTabContent({ title, description, icon, iconSmall, colorClass, fil
                     <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Salida</th>
                     <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Entrada</th>
                     <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right">Duracion</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center w-24">Accion</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -719,6 +817,177 @@ function ExcesoTabContent({ title, description, icon, iconSmall, colorClass, fil
                       <td className="px-3 py-2 text-center font-mono text-xs text-emerald-600 font-medium">{ev.entrada}</td>
                       <td className="px-3 py-2 text-right">
                         <span className={`font-mono text-xs font-bold ${durTextColor(ev.duracionSegundos)}`}>{ev.duracion}</span>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <button onClick={(e) => { e.stopPropagation(); generateSancion(ev.codigoEmp, ev.fecha, ev.salida, ev.entrada, ev.duracion, ev.duracionSegundos, tipo); }}
+                          className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 transition-colors"
+                          title="Registrar Pedido de Explicacion">
+                          <AlertTriangle className="h-3 w-3" /> Sancionar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SancionesTabContent({ sanciones, stats, onPrint, onDelete, openProfile, loading }: {
+  sanciones: Sancion[];
+  stats: SancionStat[];
+  onPrint: (id: string) => void;
+  onDelete: (id: string) => void;
+  openProfile: (c: number) => void;
+  loading: boolean;
+}) {
+  const [filterCodigo, setFilterCodigo] = useState<number | null>(null);
+  const filteredSanciones = filterCodigo ? sanciones.filter(s => s.codigoEmp === filterCodigo) : sanciones;
+  const selectedStat = stats.find(s => s.codigoEmp === filterCodigo);
+  const sortedStats = [...stats].sort((a, b) => b.totalSanciones - a.totalSanciones || b.ultimaSancion.localeCompare(a.ultimaSancion));
+
+  const tipoColors: Record<string, string> = {
+    desayuno: 'bg-orange-100 text-orange-700 border-orange-200',
+    'break-tarde': 'bg-purple-100 text-purple-700 border-purple-200',
+    'break-noche': 'bg-blue-100 text-blue-700 border-blue-200',
+  };
+
+  return (
+    <div className="space-y-4 pt-1">
+      <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-center gap-3">
+        <FileText className="h-5 w-5 text-red-500 shrink-0" />
+        <div>
+          <p className="text-sm font-semibold text-red-700">Pedidos de Explicacion</p>
+          <p className="text-xs opacity-70 text-red-600/70">Sanciones registradas por excesos de tiempo fuera de deposito</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <MetricCard icon={<FileText className="h-5 w-5 text-red-500" />} label="Total Sanciones" value={String(sanciones.length)} accent="border-l-red-500" />
+        <MetricCard icon={<Users className="h-5 w-5 text-blue-500" />} label="Empleados Sancionados" value={String(stats.length)} accent="border-l-blue-500" />
+        <MetricCard icon={<AlertTriangle className="h-5 w-5 text-amber-500" />} label="Mayor Sancionado" value={sortedStats[0]?.nombre?.split(' ').slice(0, 2).join(' ') || '\u2014'} sub={sortedStats[0] ? `${sortedStats[0].totalSanciones} sanciones` : ''} accent="border-l-amber-500" />
+        <MetricCard icon={<Clock className="h-5 w-5 text-purple-500" />} label="Ultima Sancion" value={sanciones[0]?.createdAt?.replace('T', ' ').slice(0, 16) || '\u2014'} sub={sanciones[0]?.nombre || ''} accent="border-l-purple-500" />
+      </div>
+
+      {filterCodigo && (
+        <button onClick={() => setFilterCodigo(null)}
+          className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1">
+          &larr; Volver a todas las sanciones
+        </button>
+      )}
+
+      {!filterCodigo && stats.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-bold text-gray-800">Resumen por Empleado</h2>
+            <span className="text-xs text-gray-400">{stats.length} empleados</span>
+          </div>
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-left">
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-28">Sanciones</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-40">Ultima Sancion</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center w-20">Ver</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {sortedStats.map((stat, idx) => (
+                    <tr key={stat.codigoEmp} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-3 py-2.5">
+                        <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${idx < 3 ? 'bg-red-500' : 'bg-gray-300'}`}>{idx + 1}</span>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <p className="font-semibold text-gray-800 text-sm">{stat.nombre}</p>
+                        <p className="text-[11px] text-gray-400">{stat.codigoEmp} &middot; {stat.empresa}</p>
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <span className="inline-flex items-center justify-center bg-red-500 text-white text-xs font-bold rounded-full w-7 h-7">{stat.totalSanciones}</span>
+                      </td>
+                      <td className="px-3 py-2.5 text-right text-xs text-gray-500">{stat.ultimaSancion.replace('T', ' ').slice(0, 16)}</td>
+                      <td className="px-3 py-2.5 text-center">
+                        <button onClick={() => setFilterCodigo(stat.codigoEmp)}
+                          className="text-xs font-medium px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 transition-colors">
+                          Ver
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {filteredSanciones.length === 0 ? (
+        <div className="text-center py-12 border border-gray-200 rounded-lg">
+          <FileText className="h-12 w-12 mx-auto text-gray-200 mb-3" />
+          <p className="text-gray-400 text-sm">{filterCodigo ? 'No hay sanciones para este empleado' : 'No hay sanciones registradas'}</p>
+          <p className="text-gray-300 text-xs mt-1">Las sanciones se generan desde las pestanas de excesos</p>
+        </div>
+      ) : (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-bold text-gray-800">
+              {filterCodigo && selectedStat ? `Sanciones de ${selectedStat.nombre}` : 'Todas las Sanciones'}
+            </h2>
+            <span className="text-xs text-gray-400">{filteredSanciones.length} registros</span>
+          </div>
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-gray-50 text-left">
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Fecha Hecho</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Tipo</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Salida</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Entrada</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right">Duracion</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center w-32">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filteredSanciones.map((s) => (
+                    <tr key={s.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-3 py-2 text-gray-600 text-xs">{s.fecha}</td>
+                      <td className="px-3 py-2">
+                        <button onClick={() => openProfile(s.codigoEmp)} className="font-semibold text-gray-800 text-xs hover:underline text-left">
+                          {s.nombre}
+                        </button>
+                        <p className="text-[10px] text-gray-400">{s.codigoEmp}</p>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`inline-flex items-center text-[10px] font-medium px-2 py-0.5 rounded-full border ${tipoColors[s.tipo] || 'bg-gray-100 text-gray-600 border-gray-200'}`}>
+                          {s.tipoLabel || s.tipo}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-center font-mono text-xs text-red-600 font-medium">{s.salida}</td>
+                      <td className="px-3 py-2 text-center font-mono text-xs text-emerald-600 font-medium">{s.entrada}</td>
+                      <td className="px-3 py-2 text-right">
+                        <span className={`font-mono text-xs font-bold ${durTextColor(s.duracionSegundos)}`}>{s.duracion}</span>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button onClick={() => onPrint(s.id)}
+                            className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 transition-colors"
+                            title="Imprimir Pedido de Explicacion">
+                            <Printer className="h-3 w-3" /> PDF
+                          </button>
+                          <button onClick={() => { if (confirm('Eliminar esta sancion?')) onDelete(s.id); }}
+                            className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-1 rounded bg-gray-50 text-gray-500 hover:bg-red-50 hover:text-red-600 border border-gray-200 hover:border-red-200 transition-colors"
+                            title="Eliminar sancion">
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
