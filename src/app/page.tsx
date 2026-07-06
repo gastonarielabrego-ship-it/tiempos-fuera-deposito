@@ -948,10 +948,37 @@ function SancionesTabContent({ sanciones, stats, onPrint, onDelete, openProfile,
   openProfile: (c: number) => void;
   loading: boolean;
 }) {
-  const [filterCodigo, setFilterCodigo] = useState<number | null>(null);
-  const filteredSanciones = filterCodigo ? sanciones.filter(s => s.codigoEmp === filterCodigo) : sanciones;
-  const selectedStat = stats.find(s => s.codigoEmp === filterCodigo);
-  const sortedStats = [...stats].sort((a, b) => b.totalSanciones - a.totalSanciones || b.ultimaSancion.localeCompare(a.ultimaSancion));
+  const [fechaDesde, setFechaDesde] = useState('');
+  const [fechaHasta, setFechaHasta] = useState('');
+  const [filtroNombre, setFiltroNombre] = useState('');
+  const [verStats, setVerStats] = useState(false);
+
+  const sortedStats = useMemo(() =>
+    [...stats].sort((a, b) => b.totalSanciones - a.totalSanciones || b.ultimaSancion.localeCompare(a.ultimaSancion)),
+  [stats]);
+
+  // Build a quick lookup for sanction count per employee
+  const countByEmp = useMemo(() => {
+    const m: Record<number, number> = {};
+    for (const s of sanciones) m[s.codigoEmp] = (m[s.codigoEmp] || 0) + 1;
+    return m;
+  }, [sanciones]);
+
+  const filteredSanciones = useMemo(() => {
+    let result = sanciones;
+    if (fechaDesde) result = result.filter(s => s.fecha >= fechaDesde);
+    if (fechaHasta) result = result.filter(s => s.fecha <= fechaHasta);
+    if (filtroNombre.trim()) {
+      const q = filtroNombre.toLowerCase().trim();
+      result = result.filter(s => s.nombre.toLowerCase().includes(q) || String(s.codigoEmp).includes(q));
+    }
+    return result;
+  }, [sanciones, fechaDesde, fechaHasta, filtroNombre]);
+
+  const filteredStats = useMemo(() => {
+    const empCodigos = new Set(filteredSanciones.map(s => s.codigoEmp));
+    return sortedStats.filter(s => empCodigos.has(s.codigoEmp));
+  }, [sortedStats, filteredSanciones]);
 
   const tipoColors: Record<string, string> = {
     desayuno: 'bg-orange-100 text-orange-700 border-orange-200',
@@ -959,8 +986,13 @@ function SancionesTabContent({ sanciones, stats, onPrint, onDelete, openProfile,
     'break-noche': 'bg-blue-100 text-blue-700 border-blue-200',
   };
 
+  const limpiarFiltros = () => { setFechaDesde(''); setFechaHasta(''); setFiltroNombre(''); };
+
+  const tieneFiltros = fechaDesde || fechaHasta || filtroNombre.trim();
+
   return (
     <div className="space-y-4 pt-1">
+      {/* Header */}
       <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-center gap-3">
         <FileText className="h-5 w-5 text-red-500 shrink-0" />
         <div>
@@ -969,41 +1001,79 @@ function SancionesTabContent({ sanciones, stats, onPrint, onDelete, openProfile,
         </div>
       </div>
 
+      {/* Metric cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <MetricCard icon={<FileText className="h-5 w-5 text-red-500" />} label="Total Sanciones" value={String(sanciones.length)} accent="border-l-red-500" />
-        <MetricCard icon={<Users className="h-5 w-5 text-blue-500" />} label="Empleados Sancionados" value={String(stats.length)} accent="border-l-blue-500" />
-        <MetricCard icon={<AlertTriangle className="h-5 w-5 text-amber-500" />} label="Mayor Sancionado" value={sortedStats[0]?.nombre?.split(' ').slice(0, 2).join(' ') || '\u2014'} sub={sortedStats[0] ? `${sortedStats[0].totalSanciones} sanciones` : ''} accent="border-l-amber-500" />
-        <MetricCard icon={<Clock className="h-5 w-5 text-purple-500" />} label="Ultima Sancion" value={sanciones[0]?.createdAt?.replace('T', ' ').slice(0, 16) || '\u2014'} sub={sanciones[0]?.nombre || ''} accent="border-l-purple-500" />
+        <MetricCard icon={<FileText className="h-5 w-5 text-red-500" />} label="Total Sanciones" value={String(filteredSanciones.length)} accent="border-l-red-500" />
+        <MetricCard icon={<Users className="h-5 w-5 text-blue-500" />} label="Empleados Sancionados" value={String(filteredStats.length)} accent="border-l-blue-500" />
+        <MetricCard icon={<AlertTriangle className="h-5 w-5 text-amber-500" />} label="Mayor Sancionado" value={filteredStats[0]?.nombre?.split(' ').slice(0, 2).join(' ') || '\u2014'} sub={filteredStats[0] ? `${filteredStats[0].totalSanciones} sanciones` : ''} accent="border-l-amber-500" />
+        <MetricCard icon={<Clock className="h-5 w-5 text-purple-500" />} label="Ultima Sancion" value={filteredSanciones[0]?.fecha || '\u2014'} sub={filteredSanciones[0]?.nombre || ''} accent="border-l-purple-500" />
       </div>
 
-      {filterCodigo && (
-        <button onClick={() => setFilterCodigo(null)}
-          className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1">
-          &larr; Volver a todas las sanciones
-        </button>
-      )}
-
-      {!filterCodigo && stats.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-bold text-gray-800">Resumen por Empleado</h2>
-            <span className="text-xs text-gray-400">{stats.length} empleados</span>
+      {/* Filters */}
+      <div className="bg-white border border-gray-200 rounded-lg p-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-medium text-gray-500">Desde</label>
+            <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
+              className="border border-gray-200 rounded-md px-2.5 py-1.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400" />
           </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-medium text-gray-500">Hasta</label>
+            <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
+              className="border border-gray-200 rounded-md px-2.5 py-1.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400" />
+          </div>
+          <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
+            <label className="text-[11px] font-medium text-gray-500">Buscar operador</label>
+            <input type="text" placeholder="Nombre o codigo..." value={filtroNombre} onChange={e => setFiltroNombre(e.target.value)}
+              className="border border-gray-200 rounded-md px-2.5 py-1.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400" />
+          </div>
+          {tieneFiltros && (
+            <button onClick={limpiarFiltros}
+              className="text-xs text-red-500 hover:text-red-700 font-medium px-3 py-1.5 rounded-md border border-red-200 hover:bg-red-50 transition-colors">
+              Limpiar filtros
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Toggle: Stats / Detalle */}
+      <div className="flex items-center gap-2">
+        <button onClick={() => setVerStats(false)}
+          className={`text-xs font-medium px-3 py-1.5 rounded-md border transition-colors ${!verStats ? 'bg-blue-50 text-blue-700 border-blue-300' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+          Detalle de Sanciones
+        </button>
+        <button onClick={() => setVerStats(true)}
+          className={`text-xs font-medium px-3 py-1.5 rounded-md border transition-colors ${verStats ? 'bg-blue-50 text-blue-700 border-blue-300' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+          Resumen por Empleado
+        </button>
+        <span className="text-xs text-gray-400 ml-auto">
+          {verStats ? `${filteredStats.length} empleados` : `${filteredSanciones.length} registros`}
+        </span>
+      </div>
+
+      {/* === STATS TABLE === */}
+      {verStats && (
+        filteredStats.length === 0 ? (
+          <div className="text-center py-12 border border-gray-200 rounded-lg">
+            <FileText className="h-12 w-12 mx-auto text-gray-200 mb-3" />
+            <p className="text-gray-400 text-sm">{tieneFiltros ? 'No hay resultados para los filtros aplicados' : 'No hay sanciones registradas'}</p>
+          </div>
+        ) : (
           <div className="border border-gray-200 rounded-lg overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
               <table className="w-full text-sm">
-                <thead>
+                <thead className="sticky top-0 z-10">
                   <tr className="bg-gray-50 text-left">
                     <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
                     <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
                     <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-28">Sanciones</th>
                     <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-40">Ultima Sancion</th>
-                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center w-20">Ver</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {sortedStats.map((stat, idx) => (
-                    <tr key={stat.codigoEmp} className="hover:bg-gray-50 transition-colors">
+                  {filteredStats.map((stat, idx) => (
+                    <tr key={stat.codigoEmp} className="hover:bg-gray-50 transition-colors cursor-pointer"
+                      onClick={() => { setFiltroNombre(stat.nombre.split(' ').slice(0, 2).join(' ')); setVerStats(false); }}>
                       <td className="px-3 py-2.5">
                         <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${idx < 3 ? 'bg-red-500' : 'bg-gray-300'}`}>{idx + 1}</span>
                       </td>
@@ -1015,35 +1085,24 @@ function SancionesTabContent({ sanciones, stats, onPrint, onDelete, openProfile,
                         <span className="inline-flex items-center justify-center bg-red-500 text-white text-xs font-bold rounded-full w-7 h-7">{stat.totalSanciones}</span>
                       </td>
                       <td className="px-3 py-2.5 text-right text-xs text-gray-500">{stat.ultimaSancion.replace('T', ' ').slice(0, 16)}</td>
-                      <td className="px-3 py-2.5 text-center">
-                        <button onClick={() => setFilterCodigo(stat.codigoEmp)}
-                          className="text-xs font-medium px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 transition-colors">
-                          Ver
-                        </button>
-                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           </div>
-        </div>
+        )
       )}
 
-      {filteredSanciones.length === 0 ? (
-        <div className="text-center py-12 border border-gray-200 rounded-lg">
-          <FileText className="h-12 w-12 mx-auto text-gray-200 mb-3" />
-          <p className="text-gray-400 text-sm">{filterCodigo ? 'No hay sanciones para este empleado' : 'No hay sanciones registradas'}</p>
-          <p className="text-gray-300 text-xs mt-1">Las sanciones se generan desde las pestanas de excesos</p>
-        </div>
-      ) : (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-bold text-gray-800">
-              {filterCodigo && selectedStat ? `Sanciones de ${selectedStat.nombre}` : 'Todas las Sanciones'}
-            </h2>
-            <span className="text-xs text-gray-400">{filteredSanciones.length} registros</span>
+      {/* === DETAIL TABLE (unified) === */}
+      {!verStats && (
+        filteredSanciones.length === 0 ? (
+          <div className="text-center py-12 border border-gray-200 rounded-lg">
+            <FileText className="h-12 w-12 mx-auto text-gray-200 mb-3" />
+            <p className="text-gray-400 text-sm">{tieneFiltros ? 'No hay resultados para los filtros aplicados' : 'No hay sanciones registradas'}</p>
+            <p className="text-gray-300 text-xs mt-1">Las sanciones se generan desde las pestanas de excesos</p>
           </div>
+        ) : (
           <div className="border border-gray-200 rounded-lg overflow-hidden">
             <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
               <table className="w-full text-sm">
@@ -1051,10 +1110,12 @@ function SancionesTabContent({ sanciones, stats, onPrint, onDelete, openProfile,
                   <tr className="bg-gray-50 text-left">
                     <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Fecha Hecho</th>
                     <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Empresa</th>
                     <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Tipo</th>
                     <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Salida</th>
                     <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Entrada</th>
                     <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right">Duracion</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Sanc.</th>
                     <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center w-32">Acciones</th>
                   </tr>
                 </thead>
@@ -1068,6 +1129,7 @@ function SancionesTabContent({ sanciones, stats, onPrint, onDelete, openProfile,
                         </button>
                         <p className="text-[10px] text-gray-400">{s.codigoEmp}</p>
                       </td>
+                      <td className="px-3 py-2 text-xs text-gray-500">{s.empresa}</td>
                       <td className="px-3 py-2">
                         <span className={`inline-flex items-center text-[10px] font-medium px-2 py-0.5 rounded-full border ${tipoColors[s.tipo] || 'bg-gray-100 text-gray-600 border-gray-200'}`}>
                           {s.tipoLabel || s.tipo}
@@ -1077,6 +1139,11 @@ function SancionesTabContent({ sanciones, stats, onPrint, onDelete, openProfile,
                       <td className="px-3 py-2 text-center font-mono text-xs text-emerald-600 font-medium">{s.entrada}</td>
                       <td className="px-3 py-2 text-right">
                         <span className={`font-mono text-xs font-bold ${durTextColor(s.duracionSegundos)}`}>{s.duracion}</span>
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <span className="inline-flex items-center justify-center bg-red-500 text-white text-[10px] font-bold rounded-full w-6 h-6">
+                          {countByEmp[s.codigoEmp] || 1}
+                        </span>
                       </td>
                       <td className="px-3 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
@@ -1098,7 +1165,7 @@ function SancionesTabContent({ sanciones, stats, onPrint, onDelete, openProfile,
               </table>
             </div>
           </div>
-        </div>
+        )
       )}
     </div>
   );

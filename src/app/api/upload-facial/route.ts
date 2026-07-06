@@ -13,6 +13,11 @@ export async function POST(request: NextRequest) {
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
 
+    // Ensure AuxRecord table exists
+    await db.execute({ sql: `CREATE TABLE IF NOT EXISTS AuxRecord (
+      id TEXT PRIMARY KEY, dni TEXT, nombre TEXT, fecha TEXT, hora TEXT, tipo TEXT, detalle TEXT, createdAt TEXT
+    )`, args: [] }).catch(() => {});
+
     await db.execute({ sql: "DELETE FROM AuxRecord WHERE tipo = 'FACIAL'", args: [] });
 
     const values: unknown[][] = [];

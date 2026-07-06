@@ -33,6 +33,21 @@ interface TurnoRanking { turno: string; label: string; totalFueraSegundos: numbe
 
 export async function GET() {
   try {
+    // Ensure AuxRecord table exists (for first deploy / migration)
+    await db.execute({
+      sql: `CREATE TABLE IF NOT EXISTS AuxRecord (
+        id TEXT PRIMARY KEY,
+        dni TEXT,
+        nombre TEXT,
+        fecha TEXT,
+        hora TEXT,
+        tipo TEXT,
+        detalle TEXT,
+        createdAt TEXT
+      )`,
+      args: [],
+    }).catch(() => {});
+
     const [accesosResult, auxResult] = await Promise.all([
       db.execute({ sql: 'SELECT * FROM AccessRecord ORDER BY fecha ASC, nombre ASC, hora ASC', args: [] }),
       db.execute({ sql: 'SELECT * FROM AuxRecord ORDER BY fecha ASC, nombre ASC, hora ASC', args: [] }),
