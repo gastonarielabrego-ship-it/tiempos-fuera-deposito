@@ -399,24 +399,19 @@ export default function Home() {
   .footer-img { width: 100%; max-width: 700px; margin-top: 12px; }
   .no-print { margin-bottom: 10px; }
 
-  /* Page 2: fill full A4 with flex */
-  .page2 {
-    display: flex;
-    flex-direction: column;
-    min-height: calc(297mm - 2.4cm - 8mm);
-  }
-  .page2 .box-section { flex: 1 1 0; display: flex; flex-direction: column; margin-bottom: 5px; }
-  .page2 .box-section.box-colab { flex: 4; }
-  .page2 .box-section.box-coord { flex: 3; }
-  .page2 .box-section.box-suger { flex: 2; }
-  .page2 .box-fill { flex: 1; border: 1px solid #000; padding: 4px 6px; }
-  .page2 .sig-row { flex-shrink: 0; margin-top: auto; }
+  /* Page 2: fixed mm heights to fill A4 (297mm - 2.4cm margins = 273mm usable) */
+  .p2-title { font-size: 11pt; font-weight: bold; margin-bottom: 2mm; }
+  .p2-box { border: 1px solid #000; width: 100%; }
+  .p2-box-colab { height: 90mm; }
+  .p2-box-coord { height: 60mm; }
+  .p2-box-suger { height: 45mm; }
+  .p2-sig { margin-top: 8mm; }
+  .p2-sig td { text-align: center; height: 25mm; vertical-align: bottom; border: none; border-top: 1px solid #000; }
 
   @media print {
     .no-print { display: none !important; }
     .page-break { page-break-before: always; }
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .page2 { min-height: auto; }
   }
 </style></head><body>
 <div class="no-print" style="text-align:center;padding:8px;background:#f0f0f0;margin-bottom:10px;">
@@ -472,35 +467,25 @@ export default function Home() {
 
 <!-- ═══════════ HOJA 2: DESCARGOS Y FIRMAS ═══════════ -->
 <div class="page-break"></div>
-<div class="page2">
 
-  <div class="box-section box-colab">
-    <h3>Descargo del Colaborador</h3>
-    <div class="box-fill"></div>
-  </div>
+<div class="p2-title">Descargo del Colaborador</div>
+<div class="p2-box p2-box-colab"></div>
 
-  <div class="box-section box-coord">
-    <h3>Descargo del Coordinador</h3>
-    <div class="box-fill"></div>
-  </div>
+<div class="p2-title" style="margin-top:5mm;">Descargo del Coordinador</div>
+<div class="p2-box p2-box-coord"></div>
 
-  <div class="box-section box-suger">
-    <h3>Sugerencias / Mejora / Compromiso</h3>
-    <div class="box-fill"></div>
-  </div>
+<div class="p2-title" style="margin-top:5mm;">Sugerencias / Mejora / Compromiso</div>
+<div class="p2-box p2-box-suger"></div>
 
-  <div class="sig-row">
-    <table>
-      <tr>
-        <td style="width:33%; text-align:center; height:55px; vertical-align:bottom; border:none; border-top:1px solid #000;">Firma del Colaborador</td>
-        <td style="width:33%; text-align:center; height:55px; vertical-align:bottom; border:none; border-top:1px solid #000;">Firma del Coordinador</td>
-        <td style="width:34%; text-align:center; height:55px; vertical-align:bottom; border:none; border-top:1px solid #000;">Firma de RR.HH.</td>
-      </tr>
-    </table>
-  </div>
+<table class="p2-sig" style="width:100%; border-collapse:collapse;">
+  <tr>
+    <td style="width:33%;">Firma del Colaborador</td>
+    <td style="width:33%;">Firma del Coordinador</td>
+    <td style="width:34%;">Firma de RR.HH.</td>
+  </tr>
+</table>
 
-  <img class="footer-img" src="/template_footer.png" alt="Footer">
-</div>
+<img class="footer-img" src="/template_footer.png" alt="Footer">
 
 <script>setTimeout(()=>{window.print();},500);</script>
 </body></html>`);
