@@ -75,16 +75,17 @@ async function generatePDF(d: Record<string, unknown>): Promise<Buffer> {
   const colWidth = contentWidth / 2;
   let y = height - margin;
 
+  const c = (r: number, g: number, b: number) => rgb(r / 255, g / 255, b / 255);
   const drawText = (text: string, x: number, yPos: number, size: number, f: typeof font, color?: ReturnType<typeof rgb>) => {
-    page.drawText(text, { x, y: yPos, size, font: f, color: color || rgb(0, 0, 0) });
+    page.drawText(text, { x, y: yPos, size, font: f, color: color || c(0, 0, 0) });
   };
   const drawLine = (x1: number, y1: number, x2: number, y2: number, t = 1, color?: ReturnType<typeof rgb>) => {
-    page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: t, color: color || rgb(0, 0, 0) });
+    page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: t, color: color || c(0, 0, 0) });
   };
 
   // HEADER
-  drawText('PREPARACION', margin, y, 14, fontBold, rgb(80, 80, 80));
-  drawText('DEPARTAMENTO DE RECURSOS HUMANOS', margin, y - 16, 9, font, rgb(120, 120, 120));
+  drawText('PREPARACION', margin, y, 14, fontBold, c(80, 80, 80));
+  drawText('DEPARTAMENTO DE RECURSOS HUMANOS', margin, y - 16, 9, font, c(120, 120, 120));
   y -= 40;
   drawLine(margin, y, width - margin, y, 2);
   y -= 25;
@@ -92,18 +93,18 @@ async function generatePDF(d: Record<string, unknown>): Promise<Buffer> {
   // TITLE
   const title = 'PEDIDO DE EXPLICACION';
   const tw = fontBold.widthOfTextAtSize(title, 18);
-  drawText(title, (width - tw) / 2, y, 18, fontBold, rgb(180, 0, 0));
+  drawText(title, (width - tw) / 2, y, 18, fontBold, c(180, 0, 0));
   y -= 8;
-  drawLine(margin, y, width - margin, y, 1.5, rgb(180, 0, 0));
+  drawLine(margin, y, width - margin, y, 1.5, c(180, 0, 0));
   y -= 10;
-  drawText(`Nro. Sancion: ${d.sancionNumber}`, width - margin - font.widthOfTextAtSize(`Nro. Sancion: ${d.sancionNumber}`, 9), y, 9, font, rgb(120, 120, 120));
+  drawText(`Nro. Sancion: ${d.sancionNumber}`, width - margin - font.widthOfTextAtSize(`Nro. Sancion: ${d.sancionNumber}`, 9), y, 9, font, c(120, 120, 120));
   y -= 18;
 
   // TYPE BADGE
   const incidentText = String(d.tipoLabel || d.tipo || '').toUpperCase();
   const iw = fontBold.widthOfTextAtSize(incidentText, 11);
-  page.drawRectangle({ x: margin, y: y - 4, width: iw + 20, height: 18, borderColor: rgb(180, 0, 0), borderWidth: 1.5, color: rgb(255, 240, 240) });
-  drawText(incidentText, margin + 10, y, 11, fontBold, rgb(180, 0, 0));
+  page.drawRectangle({ x: margin, y: y - 4, width: iw + 20, height: 18, borderColor: c(180, 0, 0), borderWidth: 1.5, color: c(255, 240, 240) });
+  drawText(incidentText, margin + 10, y, 11, fontBold, c(180, 0, 0));
   y -= 30;
 
   // COLLABORATOR DATA
@@ -116,38 +117,38 @@ async function generatePDF(d: Record<string, unknown>): Promise<Buffer> {
     ['Jornada:', String(d.jornada)],
   ];
   for (let i = 0; i < fields.length; i += 2) {
-    drawText(fields[i][0], margin, y, 9, fontBold, rgb(80, 80, 80));
-    drawText(fields[i][1], margin + fontBold.widthOfTextAtSize(fields[i][0] + ' ', 9), y, 10, font, rgb(30, 30, 30));
+    drawText(fields[i][0], margin, y, 9, fontBold, c(80, 80, 80));
+    drawText(fields[i][1], margin + fontBold.widthOfTextAtSize(fields[i][0] + ' ', 9), y, 10, font, c(30, 30, 30));
     if (i + 1 < fields.length) {
-      drawText(fields[i + 1][0], margin + colWidth, y, 9, fontBold, rgb(80, 80, 80));
-      drawText(fields[i + 1][1], margin + colWidth + fontBold.widthOfTextAtSize(fields[i + 1][0] + ' ', 9), y, 10, font, rgb(30, 30, 30));
+      drawText(fields[i + 1][0], margin + colWidth, y, 9, fontBold, c(80, 80, 80));
+      drawText(fields[i + 1][1], margin + colWidth + fontBold.widthOfTextAtSize(fields[i + 1][0] + ' ', 9), y, 10, font, c(30, 30, 30));
     }
     y -= 16;
   }
 
   y -= 10;
-  drawLine(margin, y, width - margin, y, 0.5, rgb(200, 200, 200));
+  drawLine(margin, y, width - margin, y, 0.5, c(200, 200, 200));
   y -= 15;
 
   // INCIDENT
   drawText('INCIDENCIA', margin, y, 12, fontBold);
   y -= 18;
-  drawText('Tipo de incidencia:', margin, y, 9, fontBold, rgb(80, 80, 80));
-  drawText(incidentText, margin + fontBold.widthOfTextAtSize('Tipo de incidencia: ', 9), y, 10, font, rgb(180, 0, 0));
+  drawText('Tipo de incidencia:', margin, y, 9, fontBold, c(80, 80, 80));
+  drawText(incidentText, margin + fontBold.widthOfTextAtSize('Tipo de incidencia: ', 9), y, 10, font, c(180, 0, 0));
   y -= 16;
-  drawText('Fecha del hecho:', margin, y, 9, fontBold, rgb(80, 80, 80));
+  drawText('Fecha del hecho:', margin, y, 9, fontBold, c(80, 80, 80));
   drawText(String(d.fecha), margin + fontBold.widthOfTextAtSize('Fecha del hecho: ', 9), y, 10, font);
   y -= 16;
-  drawText('Horario de salida del deposito:', margin, y, 9, fontBold, rgb(80, 80, 80));
-  drawText(String(d.salida) + ' hs', margin + fontBold.widthOfTextAtSize('Horario de salida del deposito: ', 9), y, 10, font, rgb(180, 0, 0));
+  drawText('Horario de salida del deposito:', margin, y, 9, fontBold, c(80, 80, 80));
+  drawText(String(d.salida) + ' hs', margin + fontBold.widthOfTextAtSize('Horario de salida del deposito: ', 9), y, 10, font, c(180, 0, 0));
   y -= 16;
-  drawText('Horario de reingreso al deposito:', margin, y, 9, fontBold, rgb(80, 80, 80));
-  drawText(String(d.entrada) + ' hs', margin + fontBold.widthOfTextAtSize('Horario de reingreso al deposito: ', 9), y, 10, font, rgb(0, 120, 0));
+  drawText('Horario de reingreso al deposito:', margin, y, 9, fontBold, c(80, 80, 80));
+  drawText(String(d.entrada) + ' hs', margin + fontBold.widthOfTextAtSize('Horario de reingreso al deposito: ', 9), y, 10, font, c(0, 120, 0));
   y -= 16;
-  drawText('Tiempo fuera de deposito (exceso):', margin, y, 9, fontBold, rgb(80, 80, 80));
-  drawText(String(d.duracion), margin + fontBold.widthOfTextAtSize('Tiempo fuera de deposito (exceso): ', 9), y, 10, font, rgb(180, 0, 0));
+  drawText('Tiempo fuera de deposito (exceso):', margin, y, 9, fontBold, c(80, 80, 80));
+  drawText(String(d.duracion), margin + fontBold.widthOfTextAtSize('Tiempo fuera de deposito (exceso): ', 9), y, 10, font, c(180, 0, 0));
   y -= 22;
-  drawLine(margin, y, width - margin, y, 0.5, rgb(200, 200, 200));
+  drawLine(margin, y, width - margin, y, 0.5, c(200, 200, 200));
   y -= 15;
 
   // EVIDENCE
@@ -159,19 +160,19 @@ async function generatePDF(d: Record<string, unknown>): Promise<Buffer> {
     `generando un tiempo fuera de deposito de ${d.duracion}, superando el tiempo maximo permitido para el periodo correspondiente.`,
     `Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).`,
   ];
-  for (const line of evidences) { drawText(line, margin, y, 9, font, rgb(40, 40, 40)); y -= 14; }
+  for (const line of evidences) { drawText(line, margin, y, 9, font, c(40, 40, 40)); y -= 14; }
   y -= 12;
 
   // MOVIMIENTOS
   drawText('MOVIMIENTOS DE MOLINETES Y REGISTROS DEL DIA', margin, y, 11, fontBold);
   y -= 18;
-  page.drawRectangle({ x: margin, y: y - 4, width: contentWidth, height: 16, color: rgb(240, 240, 240) });
-  drawText('#', margin + 5, y, 8, fontBold, rgb(80, 80, 80));
-  drawText('Hora', margin + 30, y, 8, fontBold, rgb(80, 80, 80));
-  drawText('Evento / Movimiento', margin + 90, y, 8, fontBold, rgb(80, 80, 80));
-  drawText('Tipo', margin + 300, y, 8, fontBold, rgb(80, 80, 80));
+  page.drawRectangle({ x: margin, y: y - 4, width: contentWidth, height: 16, color: c(240, 240, 240) });
+  drawText('#', margin + 5, y, 8, fontBold, c(80, 80, 80));
+  drawText('Hora', margin + 30, y, 8, fontBold, c(80, 80, 80));
+  drawText('Evento / Movimiento', margin + 90, y, 8, fontBold, c(80, 80, 80));
+  drawText('Tipo', margin + 300, y, 8, fontBold, c(80, 80, 80));
   y -= 14;
-  drawLine(margin, y, width - margin, y, 0.5, rgb(200, 200, 200));
+  drawLine(margin, y, width - margin, y, 0.5, c(200, 200, 200));
   y -= 4;
 
   const allMov = [
@@ -187,32 +188,32 @@ async function generatePDF(d: Record<string, unknown>): Promise<Buffer> {
   for (let i = 0; i < allMov.length; i++) {
     const m = allMov[i];
     if (y < margin + 160) break;
-    drawText(String(i + 1), margin + 5, y, 8, font, rgb(60, 60, 60));
-    drawText(m.hora, margin + 30, y, 8, font, rgb(60, 60, 60));
-    drawText(m.evento, margin + 90, y, 8, font, rgb(60, 60, 60));
-    let tc = rgb(80, 80, 80);
-    if (m.tipo === 'Acceso') tc = m.evento.includes('Salida') ? rgb(180, 0, 0) : rgb(0, 120, 0);
-    else if (m.tipo === 'Facial') tc = rgb(0, 0, 180);
-    else if (m.tipo === 'Comida') tc = rgb(180, 100, 0);
+    drawText(String(i + 1), margin + 5, y, 8, font, c(60, 60, 60));
+    drawText(m.hora, margin + 30, y, 8, font, c(60, 60, 60));
+    drawText(m.evento, margin + 90, y, 8, font, c(60, 60, 60));
+    let tc = c(80, 80, 80);
+    if (m.tipo === 'Acceso') tc = m.evento.includes('Salida') ? c(180, 0, 0) : c(0, 120, 0);
+    else if (m.tipo === 'Facial') tc = c(0, 0, 180);
+    else if (m.tipo === 'Comida') tc = c(180, 100, 0);
     drawText(m.tipo, margin + 300, y, 8, font, tc);
     y -= 14;
   }
 
   // SIGNATURES
   y = margin + 110;
-  drawLine(margin, y, width - margin, y, 0.5, rgb(200, 200, 200));
+  drawLine(margin, y, width - margin, y, 0.5, c(200, 200, 200));
   y -= 20;
-  drawText('Firma del colaborador:', margin, y, 9, font, rgb(80, 80, 80));
-  drawText('Firma del responsable de area:', margin + colWidth, y, 9, font, rgb(80, 80, 80));
+  drawText('Firma del colaborador:', margin, y, 9, font, c(80, 80, 80));
+  drawText('Firma del responsable de area:', margin + colWidth, y, 9, font, c(80, 80, 80));
   y -= 5;
-  drawLine(margin, y, margin + colWidth - 20, y, 0.5, rgb(150, 150, 150));
-  drawLine(margin + colWidth, y, width - margin, y, 0.5, rgb(150, 150, 150));
+  drawLine(margin, y, margin + colWidth - 20, y, 0.5, c(150, 150, 150));
+  drawLine(margin + colWidth, y, width - margin, y, 0.5, c(150, 150, 150));
   y -= 15;
-  drawText('Aclaracion:', margin, y, 8, font, rgb(120, 120, 120));
-  drawText('Aclaracion:', margin + colWidth, y, 8, font, rgb(120, 120, 120));
+  drawText('Aclaracion:', margin, y, 8, font, c(120, 120, 120));
+  drawText('Aclaracion:', margin + colWidth, y, 8, font, c(120, 120, 120));
   y -= 20;
-  drawText('Fecha:', margin, y, 8, font, rgb(120, 120, 120));
-  drawText('Fecha:', margin + colWidth, y, 8, font, rgb(120, 120, 120));
+  drawText('Fecha:', margin, y, 8, font, c(120, 120, 120));
+  drawText('Fecha:', margin + colWidth, y, 8, font, c(120, 120, 120));
 
   const pdfBytes = await pdfDoc.save();
   return Buffer.from(pdfBytes);
