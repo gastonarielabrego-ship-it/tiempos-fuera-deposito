@@ -168,6 +168,7 @@ export default function OperatorPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [fechaFilter, setFechaFilter] = useState('');
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -203,11 +204,12 @@ export default function OperatorPage() {
   const emp = empDays[0] || null;
   const rankingEntry = data?.ranking.find(r => r.codigoEmp === codigo);
 
-  // Filtered days
+  // Filtered days by fechaFilter
   const filteredDays = useMemo(() => {
-    if (!selectedDate) return empDays;
-    return empDays.filter(d => d.fecha === selectedDate);
-  }, [empDays, selectedDate]);
+    if (!fechaFilter) return selectedDate ? empDays.filter(d => d.fecha === selectedDate) : empDays;
+    const target = fechaFilter || selectedDate;
+    return empDays.filter(d => d.fecha === target);
+  }, [empDays, selectedDate, fechaFilter]);
 
   // All unique dates
   const allDates = useMemo(() => {
@@ -329,6 +331,12 @@ export default function OperatorPage() {
 
         {/* ── Date filter ── */}
         <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <input type="date" value={fechaFilter}
+              onChange={e => { setFechaFilter(e.target.value); setSelectedDate(null); }}
+              className="h-8 text-xs border border-gray-300 rounded px-2 bg-white" />
+            {fechaFilter && <button onClick={() => setFechaFilter('')} className="text-xs text-gray-400 hover:text-gray-600">✕ Limpiar</button>}
+          </div>
           <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Filtrar por fecha:</span>
           <div className="flex gap-1.5 flex-wrap">
             <button onClick={() => setSelectedDate(null)}

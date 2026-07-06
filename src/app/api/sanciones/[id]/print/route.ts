@@ -29,28 +29,44 @@ export async function GET(
       createdAt: String(row.createdAt ?? ''),
     };
 
+    // Access records for timeline
     const movResult = await db.execute({
       sql: 'SELECT hora, terminal FROM AccessRecord WHERE codigoEmp = ? AND fecha = ? ORDER BY hora ASC',
       args: [String(sancion.codigoEmp), sancion.fecha],
     });
     const movimientos = movResult.rows.map((r: Record<string, unknown>) => ({ hora: String(r.hora ?? ''), terminal: String(r.terminal ?? '') }));
 
-    const facialResult = await db.execute({
-      sql: 'SELECT hora, zona FROM FacialRecord WHERE persona = ? AND fecha = ? ORDER BY hora ASC',
-      args: [sancion.nombre.toUpperCase(), sancion.fecha],
+    // Aux records (facial + comida) from unified AuxRecord table
+    let dni = '';
+    const accDniResult = await db.execute({
+      sql: 'SELECT dni FROM AccessRecord WHERE codigoEmp = ? AND fecha = ? LIMIT 1',
+      args: [String(sancion.codigoEmp), sancion.fecha],
     });
-    const faciales = facialResult.rows.map((r: Record<string, unknown>) => ({ hora: String(r.hora ?? ''), zona: String(r.zona ?? '') }));
+    if (accDniResult.rows.length > 0) {
+      dni = String((accDniResult.rows[0] as Record<string, unknown>).dni ?? '').trim();
+    }
 
-    const comidaResult = await db.execute({
-      sql: 'SELECT hora FROM MealRecord WHERE nombre = ? AND fecha = ? ORDER BY hora ASC',
-      args: [sancion.nombre.toUpperCase(), sancion.fecha],
-    });
-    const comidas = comidaResult.rows.map((r: Record<string, unknown>) => String(r.hora ?? ''));
+    let auxResult;
+    if (dni) {
+      auxResult = await db.execute({
+        sql: 'SELECT hora, tipo, detalle FROM AuxRecord WHERE dni = ? AND fecha = ? ORDER BY hora ASC',
+        args: [dni, sancion.fecha],
+      });
+    }
+    if (!auxResult || auxResult.rows.length === 0) {
+      auxResult = await db.execute({
+        sql: 'SELECT hora, tipo, detalle FROM AuxRecord WHERE nombre = ? AND fecha = ? ORDER BY hora ASC',
+        args: [sancion.nombre.toUpperCase(), sancion.fecha],
+      });
+    }
+    const auxRegistros = auxResult.rows.map((r: Record<string, unknown>) => ({
+      hora: String(r.hora ?? ''), tipo: String(r.tipo ?? ''), detalle: String(r.detalle ?? ''),
+    }));
 
     const countResult = await db.execute({ sql: 'SELECT COUNT(*) as total FROM Sancion WHERE codigoEmp = ?', args: [String(sancion.codigoEmp)] });
     const sancionNumber = Number((countResult.rows[0] as Record<string, unknown>)?.total ?? 1);
 
-    const docxBuffer = await generateDocx({ ...sancion, movimientos, faciales, comidas, sancionNumber });
+    const docxBuffer = await generateDocx({ ...sancion, movimientos, auxRegistros, sancionNumber });
 
     const filename = `Pedido_Explicacion_${sancion.nombre.replace(/\s+/g, '_')}_${sancion.fecha}.docx`;
     return new NextResponse(docxBuffer, {
@@ -150,8 +166,10 @@ async function generateDocx(d: Record<string, unknown>): Promise<Buffer> {
   // Build movements text
   const allMov = [
     ...(d.movimientos as { hora: string; terminal: string }[]).map(m => `${m.hora} - ${m.terminal} (Acceso)`),
-    ...(d.faciales as { hora: string; zona: string }[]).map(f => `${f.hora} - ${f.zona || 'Facial'} (Facial)`),
-    ...(d.comidas as string[]).map(h => `${h} - TK Comida (Comida)`),
+    ...(d.auxRegistros as { hora: string; tipo: string; detalle: string }[]).map(a => {
+      const tipoLabel = a.tipo === 'FACIAL' ? 'Facial' : 'Comida';
+      return `${a.hora} - ${a.detalle || tipoLabel} (${tipoLabel})`;
+    }),
   ].sort();
 
   const movText = allMov.length > 0

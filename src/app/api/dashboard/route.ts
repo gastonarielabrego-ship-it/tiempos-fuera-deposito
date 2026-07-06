@@ -33,15 +33,13 @@ interface TurnoRanking { turno: string; label: string; totalFueraSegundos: numbe
 
 export async function GET() {
   try {
-    const [accesosResult, comidasResult, facialResult] = await Promise.all([
+    const [accesosResult, auxResult] = await Promise.all([
       db.execute({ sql: 'SELECT * FROM AccessRecord ORDER BY fecha ASC, nombre ASC, hora ASC', args: [] }),
-      db.execute({ sql: 'SELECT * FROM MealRecord ORDER BY fecha ASC, nombre ASC, hora ASC', args: [] }),
-      db.execute({ sql: 'SELECT * FROM FacialRecord ORDER BY fecha ASC, persona ASC, hora ASC', args: [] }),
+      db.execute({ sql: 'SELECT * FROM AuxRecord ORDER BY fecha ASC, nombre ASC, hora ASC', args: [] }),
     ]);
 
     const accesos = accesosResult.rows as Record<string, unknown>[];
-    const comidas = comidasResult.rows as Record<string, unknown>[];
-    const facial = facialResult.rows as Record<string, unknown>[];
+    const auxRecords = auxResult.rows as Record<string, unknown>[];
 
     if (accesos.length === 0) {
       return NextResponse.json({
@@ -50,39 +48,40 @@ export async function GET() {
       });
     }
 
-    // Build meal lookup — key by DNI|fecha, fallback to nombre|fecha
-    const mealMap = new Map<string, string[]>();
-    const mealMapByName = new Map<string, string[]>();
-    for (const c of comidas) {
-      const dni = String(c.dni ?? '').trim();
-      const nombre = String(c.nombre ?? '').toUpperCase();
-      const fecha = String(c.fecha ?? '');
+    // Build unified lookup map from AuxRecord
+    // Key: dni|fecha (with fallback nombre|fecha)
+    // Value: { faciales: {hora, zona}[], comidas: string[] }
+    const auxMapByDni = new Map<string, { faciales: { hora: string; zona: string }[]; comidas: string[] }>();
+    const auxMapByName = new Map<string, { faciales: { hora: string; zona: string }[]; comidas: string[] }>();
+
+    let totalComidas = 0;
+    let totalFacial = 0;
+
+    for (const r of auxRecords) {
+      const dni = String(r.dni ?? '').trim();
+      const nombre = String(r.nombre ?? '').toUpperCase();
+      const fecha = String(r.fecha ?? '');
+      const hora = String(r.hora ?? '');
+      const tipo = String(r.tipo ?? '');
+      const detalle = String(r.detalle ?? '');
+
+      if (tipo === 'COMIDA') totalComidas++;
+      if (tipo === 'FACIAL') totalFacial++;
+
       const dniKey = dni ? `${dni}|${fecha}` : '';
       const nameKey = `${nombre}|${fecha}`;
-      if (dniKey) {
-        if (!mealMap.has(dniKey)) mealMap.set(dniKey, []);
-        mealMap.get(dniKey)!.push(String(c.hora ?? ''));
-      }
-      if (!mealMapByName.has(nameKey)) mealMapByName.set(nameKey, []);
-      mealMapByName.get(nameKey)!.push(String(c.hora ?? ''));
-    }
 
-    // Build facial lookup — key by DNI|fecha, fallback to nombre|fecha
-    const facialMap = new Map<string, { hora: string; zona: string }[]>();
-    const facialMapByName = new Map<string, { hora: string; zona: string }[]>();
-    for (const f of facial) {
-      const dni = String(f.dni ?? '').trim();
-      const persona = String(f.persona ?? '').toUpperCase();
-      const fecha = String(f.fecha ?? '');
-      const dniKey = dni ? `${dni}|${fecha}` : '';
-      const nameKey = `${persona}|${fecha}`;
-      const entry = { hora: String(f.hora ?? ''), zona: String(f.zona ?? '') };
+      // Ensure map entries exist
       if (dniKey) {
-        if (!facialMap.has(dniKey)) facialMap.set(dniKey, []);
-        facialMap.get(dniKey)!.push(entry);
+        if (!auxMapByDni.has(dniKey)) auxMapByDni.set(dniKey, { faciales: [], comidas: [] });
+        const entry = auxMapByDni.get(dniKey)!;
+        if (tipo === 'FACIAL') entry.faciales.push({ hora, zona: detalle });
+        if (tipo === 'COMIDA') entry.comidas.push(hora);
       }
-      if (!facialMapByName.has(nameKey)) facialMapByName.set(nameKey, []);
-      facialMapByName.get(nameKey)!.push(entry);
+      if (!auxMapByName.has(nameKey)) auxMapByName.set(nameKey, { faciales: [], comidas: [] });
+      const nameEntry = auxMapByName.get(nameKey)!;
+      if (tipo === 'FACIAL') nameEntry.faciales.push({ hora, zona: detalle });
+      if (tipo === 'COMIDA') nameEntry.comidas.push(hora);
     }
 
     // Group access records by (codigoEmp, fecha)
@@ -115,8 +114,7 @@ export async function GET() {
 
       const nombreKey = `${String(first.nombre ?? '').toUpperCase()}|${first.fecha}`;
       const dniKey = String(first.dni ?? '').trim() ? `${String(first.dni ?? '').trim()}|${String(first.fecha ?? '')}` : '';
-      const comidasHoras = (dniKey && mealMap.has(dniKey)) ? mealMap.get(dniKey)! : (mealMapByName.get(nombreKey) || []);
-      const facialRegistros = (dniKey && facialMap.has(dniKey)) ? facialMap.get(dniKey)! : (facialMapByName.get(nombreKey) || []);
+      const auxData = (dniKey && auxMapByDni.has(dniKey)) ? auxMapByDni.get(dniKey)! : (auxMapByName.get(nombreKey) || { faciales: [], comidas: [] });
 
       // Raw access events for timeline
       const accesosEventos: AccesoEvento[] = sorted.map(r => ({
@@ -169,7 +167,7 @@ export async function GET() {
         empresa: String(first.empresa ?? ''),
         turno,
         tiemposFuera, totalFueraSegundos, totalFuera: secondsToTime(totalFueraSegundos),
-        comidasHoras, facialRegistros, accesosEventos,
+        comidasHoras: auxData.comidas, facialRegistros: auxData.faciales, accesosEventos,
       });
     }
 
@@ -274,8 +272,8 @@ export async function GET() {
       summary: {
         totalEmployees: uniqueEmployees.size,
         totalRecords: accesos.length,
-        totalComidas: comidas.length,
-        totalFacial: facial.length,
+        totalComidas,
+        totalFacial,
         avgOutsidePerEmployee: uniqueEmployees.size > 0 ? secondsToTime(Math.round(totalOutsideTime / uniqueEmployees.size)) : '00:00:00',
         dates,
       },

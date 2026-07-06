@@ -117,6 +117,7 @@ export default function Home() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const fileInputsRef = useRef<Record<string, HTMLInputElement | null>>({});
 
+  const [fechaFilter, setFechaFilter] = useState('');
   const [sanciones, setSanciones] = useState<Sancion[]>([]);
   const [sancionStats, setSancionStats] = useState<SancionStat[]>([]);
 
@@ -187,11 +188,18 @@ export default function Home() {
 
   /* ── Derived data ── */
 
+  // Filter employees by fechaFilter
+  const filteredEmployees = useMemo(() => {
+    if (!data) return [];
+    if (!fechaFilter) return data.employees;
+    return data.employees.filter(e => e.fecha === fechaFilter);
+  }, [data, fechaFilter]);
+
   // Build map: codigoEmp -> primary turno (most frequent turno across all their days)
   const empTurnoMap = useMemo(() => {
     if (!data) return new Map<number, string>();
     const map = new Map<number, Map<string, number>>();
-    for (const ed of data.employees) {
+    for (const ed of filteredEmployees) {
       if (!map.has(ed.codigoEmp)) map.set(ed.codigoEmp, new Map());
       const turnoCounts = map.get(ed.codigoEmp)!;
       turnoCounts.set(ed.turno, (turnoCounts.get(ed.turno) || 0) + 1);
@@ -203,21 +211,6 @@ export default function Home() {
       result.set(codigo, best);
     }
     return result;
-  }, [data]);
-
-  const filteredRanking = useMemo(() => {
-    if (!data) return [];
-    return data.ranking.filter(e => {
-      const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || String(e.codigoEmp).includes(search);
-      const empTurno = empTurnoMap.get(e.codigoEmp) || 'OTRO';
-      const matchTurno = filterTurno === 'all' || empTurno === filterTurno;
-      return matchSearch && matchTurno;
-    });
-  }, [data, search, filterTurno, empTurnoMap]);
-
-  const filteredTurnoCards = useMemo(() => {
-    if (!data) return [];
-    return data.rankingPorTurno.filter(tr => tr.empleados.length > 0);
   }, [data]);
 
   const openProfile = (codigo: number) => {
@@ -233,7 +226,7 @@ export default function Home() {
   const buildExcesoRanking = useCallback((salidaMinSeg: number, salidaMaxSeg: number, minDurSeg: number): ExcesoEntry[] => {
     if (!data) return [];
     const map = new Map<number, ExcesoEntry>();
-    for (const emp of data.employees) {
+    for (const emp of filteredEmployees) {
       for (const tf of emp.tiemposFuera) {
         const salidaSeg = timeToS(tf.salida);
         const inWindow = salidaSeg >= salidaMinSeg && salidaSeg <= salidaMaxSeg;
@@ -272,13 +265,65 @@ export default function Home() {
     totalSegundos: list.reduce((s, e) => s + e.totalFueraSegundos, 0),
     empleadosUnicos: list.length,
   });
-  const desayunoStats = useMemo(() => excesoStats(desayunoRanking), [desayunoRanking]);
-  const breakTardeStats = useMemo(() => excesoStats(breakTardeRanking), [breakTardeRanking]);
-  const breakNocheStats = useMemo(() => excesoStats(breakNocheRanking), [breakNocheRanking]);
+  const desayunoStats = useMemo(() => excesoStats(desayunoFiltered), [desayunoFiltered]);
+  const breakTardeStats = useMemo(() => excesoStats(breakTardeFiltered), [breakTardeFiltered]);
+  const breakNocheStats = useMemo(() => excesoStats(breakNocheFiltered), [breakNocheFiltered]);
 
-  const totalFueraAll = data?.ranking.reduce((s, e) => s + e.totalFueraSegundos, 0) || 0;
-  const maxFuera = data?.ranking[0];
-  const totalEventos = data?.employees.reduce((s, e) => s + e.tiemposFuera.length, 0) || 0;
+  // Recompute ranking from filtered employees when date filter is active
+  const activeRanking = useMemo(() => {
+    if (!fechaFilter || !data) return data?.ranking || [];
+    const rMap = new Map<number, RankingEntry>();
+    for (const emp of filteredEmployees) {
+      if (!rMap.has(emp.codigoEmp)) {
+        rMap.set(emp.codigoEmp, { codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector, totalFueraSegundos: 0, diasCount: 0, avgPorDia: '00:00:00', maxDiaFuera: '00:00:00', maxDiaFecha: '', eventosCount: 0 });
+      }
+      const r = rMap.get(emp.codigoEmp)!;
+      r.totalFueraSegundos += emp.totalFueraSegundos;
+      r.eventosCount += emp.tiemposFuera.length;
+    }
+    // Finalize: set diasCount, avg, max
+    for (const r of rMap.values()) {
+      const empDays = filteredEmployees.filter(e => e.codigoEmp === r.codigoEmp);
+      r.diasCount = empDays.length;
+      const diasConFuera = empDays.filter(e => e.totalFueraSegundos > 0);
+      r.avgPorDia = diasConFuera.length > 0 ? formatHMS(Math.round(r.totalFueraSegundos / diasConFuera.length)) : '00:00:00';
+      const maxDay = empDays.reduce((max, d) => d.totalFueraSegundos > max.totalFueraSegundos ? d : max, empDays[0]);
+      if (maxDay) { r.maxDiaFuera = maxDay.totalFuera; r.maxDiaFecha = maxDay.fecha; }
+    }
+    return Array.from(rMap.values()).sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos);
+  }, [data, filteredEmployees, fechaFilter]);
+
+  // Recompute turno cards from filtered employees when date filter is active
+  const activeTurnoCards = useMemo(() => {
+    if (!fechaFilter) return data?.rankingPorTurno || [];
+    return data?.rankingPorTurno.map(tr => ({
+      ...tr,
+      empleados: tr.empleados.filter(e => filteredEmployees.some(fe => fe.codigoEmp === e.codigoEmp && fe.fecha === fechaFilter)),
+      totalFueraSegundos: tr.empleados.filter(e => filteredEmployees.some(fe => fe.codigoEmp === e.codigoEmp && fe.fecha === fechaFilter)).reduce((s, e) => s + e.totalFueraSegundos, 0),
+      totalFuera: formatHMS(tr.empleados.filter(e => filteredEmployees.some(fe => fe.codigoEmp === e.codigoEmp && fe.fecha === fechaFilter)).reduce((s, e) => s + e.totalFueraSegundos, 0)),
+      eventosCount: tr.empleados.filter(e => filteredEmployees.some(fe => fe.codigoEmp === e.codigoEmp && fe.fecha === fechaFilter)).reduce((s, e) => s + e.eventosCount, 0),
+    })) || [];
+  }, [data, filteredEmployees, fechaFilter]);
+
+
+  const filteredRanking = useMemo(() => {
+    if (!data) return [];
+    return activeRanking.filter(e => {
+      const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || String(e.codigoEmp).includes(search);
+      const empTurno = empTurnoMap.get(e.codigoEmp) || 'OTRO';
+      const matchTurno = filterTurno === 'all' || empTurno === filterTurno;
+      return matchSearch && matchTurno;
+    });
+  }, [data, search, filterTurno, empTurnoMap, activeRanking]);
+
+  const filteredTurnoCards = useMemo(() => {
+    if (!data) return [];
+    return activeTurnoCards.filter(tr => tr.empleados.length > 0);
+  }, [data, activeTurnoCards]);
+
+  const totalFueraAll = activeRanking.reduce((s, e) => s + e.totalFueraSegundos, 0) || 0;
+  const maxFuera = activeRanking[0];
+  const totalEventos = filteredEmployees.reduce((s, e) => s + e.tiemposFuera.length, 0) || 0;
 
   const hasData = data && data.employees.length > 0;
   const isEmpty = data && data.employees.length === 0 && !error;
@@ -308,24 +353,25 @@ export default function Home() {
 
   const printSancion = useCallback(async (id: string) => {
     try {
-      const r = await window.fetch(`/api/sanciones/${id}`);
-      if (!r.ok) { showToast('Error al obtener sancion', 'error'); return; }
-      const sancion = await r.json();
-
-      // Fetch movements
-      const [movR, facR, comR] = await Promise.all([
+      const [sancionR, movR] = await Promise.all([
+        window.fetch(`/api/sanciones/${id}`),
         window.fetch(`/api/sanciones/${id}/movimientos`),
-        window.fetch(`/api/sanciones/${id}/movimientos?type=facial`),
-        window.fetch(`/api/sanciones/${id}/movimientos?type=comida`),
       ]);
-      const movimientos = movR.ok ? await movR.json() : [];
-      const faciales = facR.ok ? await facR.json() : [];
-      const comidas = comR.ok ? await comR.json() : [];
+      if (!sancionR.ok) { showToast('Error al obtener sancion', 'error'); return; }
+      const sancion = await sancionR.json();
+      const movRows = movR.ok ? await movR.json() : [];
 
+      // Build unified movements from sancion + aux records
       const allMov = [
-        ...movimientos.map((m: { hora: string; terminal: string }) => ({ hora: m.hora, evento: m.terminal, tipo: 'Acceso' })),
-        ...faciales.map((f: { hora: string; zona: string }) => ({ hora: f.hora, evento: f.zona || 'Facial', tipo: 'Facial' })),
-        ...comidas.map((h: string) => ({ hora: h, evento: 'TK Comida', tipo: 'Comida' })),
+        // Access records (from sancion salida/entrada)
+        { hora: sancion.salida, evento: 'Salida Depo', tipo: 'Acceso' },
+        { hora: sancion.entrada, evento: 'Entrada Depo', tipo: 'Acceso' },
+        // Aux records (facial + comida)
+        ...movRows.map((m: { hora: string; tipo: string; detalle: string }) => ({
+          hora: m.hora,
+          evento: m.detalle || (m.tipo === 'FACIAL' ? 'Facial' : 'TK Comida'),
+          tipo: m.tipo === 'FACIAL' ? 'Facial' : 'Comida',
+        })),
       ].sort((a: { hora: string }, b: { hora: string }) => a.hora.localeCompare(b.hora));
 
       const today = new Date().toISOString().split('T')[0];
@@ -595,6 +641,14 @@ export default function Home() {
               </button>
             </div>
 
+            {/* ── Date filter ── */}
+            <div className="flex items-center gap-2 mb-3">
+              <input type="date" value={fechaFilter}
+                onChange={e => setFechaFilter(e.target.value)}
+                className="h-8 text-xs border border-gray-300 rounded px-2 bg-white" />
+              {fechaFilter && <button onClick={() => setFechaFilter('')} className="text-xs text-gray-400 hover:text-gray-600">✕ Limpiar</button>}
+            </div>
+
             {/* ═══════════ TAB: RANKING GENERAL ═══════════ */}
             {activeTab === 'ranking' && (
               <div className="space-y-4 pt-1">
@@ -833,92 +887,15 @@ function ExcesoTabContent({ title, description, icon, iconSmall, colorClass, fil
         <MetricCard icon={<AlertTriangle className="h-5 w-5 text-red-600" />} label="Mayor Exceso" value={maxAllEvento?.duracion || '00:00:00'} sub={maxAllEvento ? `${filtered.find(e => e.eventos.includes(maxAllEvento))?.nombre || ''} ${maxAllEvento.fecha}` : ''} accent="border-l-red-600" />
       </div>
 
-      {/* Summary bar */}
-      <div className={`${c.bg} border ${c.border} rounded-lg px-4 py-2.5 flex items-center gap-6 flex-wrap`}>
-        <div className={`flex items-center gap-1.5 ${c.text}`}>
-          {iconSmall}
-          <span className="text-xs font-semibold uppercase tracking-wider">{title}</span>
-        </div>
-        <span className="text-sm"><b className={c.text}>{stats.totalEventos}</b> <span className="text-gray-500">excesos</span></span>
-        <span className="text-sm"><b className={c.text}>{formatHMS(stats.totalSegundos)}</b> <span className="text-gray-500">suma total</span></span>
-        <span className="text-sm"><b className={c.text}>{stats.empleadosUnicos}</b> <span className="text-gray-500">empleados</span></span>
-      </div>
-
-      {/* Ranking table */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-bold text-gray-800">Ranking {title}</h2>
-          <span className="text-xs text-gray-400">{filtered.length} operadores</span>
-        </div>
-
-        {filtered.length === 0 ? (
-          <div className="text-center py-12 border border-gray-200 rounded-lg">
-            {iconSmall}
-            <p className="text-gray-400 text-sm mt-2">No hay excesos registrados</p>
-          </div>
-        ) : (
-          <div className="border border-gray-200 rounded-lg overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className={`${c.headerBg} text-left`}>
-                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} w-12`}>#</th>
-                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text}`}>Operador</th>
-                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} text-right w-32`}>T. Exceso Total</th>
-                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} text-right w-20`}>Dias</th>
-                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} text-right w-20`}>Eventos</th>
-                    <th className={`px-3 py-2.5 text-xs font-semibold ${c.text} text-right w-28`}>Mayor Exceso</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {filtered.map((emp, idx) => {
-                    const pos = idx + 1;
-                    const rankBadge = pos <= 3 ? c.badge1 : pos <= 7 ? c.badge2 : '';
-                    const rowBg = pos <= 3 ? c.rowBg : '';
-                    const maxEvento = [...emp.eventos].sort((a, b) => b.duracionSegundos - a.duracionSegundos)[0];
-
-                    return (
-                      <tr key={emp.codigoEmp} className={`${rowBg} ${c.hoverBg} cursor-pointer transition-colors`}
-                        onClick={() => openProfile(emp.codigoEmp)}>
-                        <td className="px-3 py-3">
-                          {rankBadge ? (
-                            <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
-                          ) : (
-                            <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-3">
-                          <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
-                          <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
-                        </td>
-                        <td className="px-3 py-3 text-right">
-                          <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>{formatHMS(emp.totalFueraSegundos)}</span>
-                        </td>
-                        <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.dias.size}</span></td>
-                        <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.eventos.length}</span></td>
-                        <td className="px-3 py-3 text-right">
-                          <span className={`font-mono text-xs font-bold ${durTextColor(maxEvento?.duracionSegundos ?? 0)}`}>{maxEvento?.duracion || '—'}</span>
-                          {maxEvento && <p className="text-[10px] text-gray-400">{maxEvento.fecha} {maxEvento.salida}-{maxEvento.entrada}</p>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* Detail table */}
       {filtered.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-bold text-gray-800">Detalle de Todos los Excesos</h2>
-            <span className="text-xs text-gray-400">{stats.totalEventos} registros</span>
+            <h2 className="text-sm font-bold text-gray-800">{title}</h2>
+            <span className="text-xs text-gray-400">{stats.totalEventos} registros · {filtered.length} operadores</span>
           </div>
           <div className="border border-gray-200 rounded-lg overflow-hidden">
-            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+            <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
               <table className="w-full text-sm">
                 <thead className="sticky top-0">
                   <tr className="bg-gray-50 text-left">

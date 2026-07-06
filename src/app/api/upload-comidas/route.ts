@@ -13,22 +13,22 @@ export async function POST(request: NextRequest) {
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
 
-    await db.execute({ sql: 'DELETE FROM MealRecord', args: [] });
+    await db.execute({ sql: "DELETE FROM AuxRecord WHERE tipo = 'COMIDA'", args: [] });
 
     const values: unknown[][] = [];
     for (const row of rows) {
       const nombre = String(getRowValue(row, 'Nombre') || '');
-      const dni = Number(getRowValue(row, 'DNI') || 0);
-      if (!nombre || !dni) continue;
+      const dni = String(getRowValue(row, 'DNI') || '');
+      if (!nombre) continue;
       const fecha = parseExcelDate(getRowValue(row, 'Fecha'));
       const hora = parseExcelTime(getRowValue(row, 'y', 'Hora', 'hora'));
       if (!fecha || !hora) continue;
-      values.push([crypto.randomUUID(), nombre, dni, fecha, hora]);
+      values.push([crypto.randomUUID(), dni, nombre, fecha, hora, 'COMIDA', 'TK Comida']);
     }
 
     if (values.length > 0) {
       await db.batch(values.map(v => ({
-        sql: `INSERT INTO MealRecord (id, nombre, dni, fecha, hora, createdAt) VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+        sql: `INSERT INTO AuxRecord (id, dni, nombre, fecha, hora, tipo, detalle, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
         args: v,
       })));
     }

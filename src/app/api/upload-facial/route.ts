@@ -13,23 +13,23 @@ export async function POST(request: NextRequest) {
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
 
-    await db.execute({ sql: 'DELETE FROM FacialRecord', args: [] });
+    await db.execute({ sql: "DELETE FROM AuxRecord WHERE tipo = 'FACIAL'", args: [] });
 
     const values: unknown[][] = [];
     for (const row of rows) {
       const persona = String(getRowValue(row, 'Persona') || '');
-      const dni = Number(getRowValue(row, 'DNI') || 0);
-      if (!persona || !dni) continue;
+      const dni = String(getRowValue(row, 'DNI') || '');
+      if (!persona) continue;
       const fecha = parseExcelDate(getRowValue(row, 'Fecha'));
       const hora = parseExcelTime(getRowValue(row, 'y', 'Hora', 'hora'));
       const zona = String(getRowValue(row, 'Zona') || '');
       if (!fecha || !hora) continue;
-      values.push([crypto.randomUUID(), persona, dni, fecha, hora, zona]);
+      values.push([crypto.randomUUID(), dni, persona, fecha, hora, 'FACIAL', zona]);
     }
 
     if (values.length > 0) {
       await db.batch(values.map(v => ({
-        sql: `INSERT INTO FacialRecord (id, persona, dni, fecha, hora, zona, createdAt) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+        sql: `INSERT INTO AuxRecord (id, dni, nombre, fecha, hora, tipo, detalle, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
         args: v,
       })));
     }

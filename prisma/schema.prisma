@@ -20,21 +20,13 @@ model AccessRecord {
   createdAt    DateTime @default(now())
 }
 
-model MealRecord {
+model AuxRecord {
   id        String   @id @default(cuid())
+  dni       String
   nombre    String
-  dni       Int
   fecha     String
   hora      String
-  createdAt DateTime @default(now())
-}
-
-model FacialRecord {
-  id        String   @id @default(cuid())
-  persona   String
-  dni       Int
-  fecha     String
-  hora      String
-  zona      String
+  tipo      String
+  detalle   String
   createdAt DateTime @default(now())
 }
