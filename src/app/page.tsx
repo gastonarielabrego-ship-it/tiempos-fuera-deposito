@@ -399,14 +399,23 @@ export default function Home() {
   .footer-img { width: 100%; max-width: 700px; margin-top: 12px; }
   .no-print { margin-bottom: 10px; }
 
-  /* Page 2: fixed mm heights to fill A4 (297mm - 2.4cm margins = 273mm usable) */
-  .p2-title { font-size: 11pt; font-weight: bold; margin-bottom: 2mm; }
-  .p2-box { border: 1px solid #000; width: 100%; }
-  .p2-box-colab { height: 82mm; }
-  .p2-box-coord { height: 58mm; }
-  .p2-box-suger { height: 40mm; }
-  .p2-sig { margin-top: 6mm; }
-  .p2-sig td { text-align: center; height: 22mm; vertical-align: bottom; border: none; border-top: 1px solid #000; }
+  /* Page 2: flex container fills exactly one A4, boxes grow/shrink dynamically */
+  .page2 {
+    display: flex;
+    flex-direction: column;
+    height: 272mm;
+    overflow: hidden;
+  }
+  .p2-section { display: flex; flex-direction: column; }
+  .p2-section.colab { flex: 4; }
+  .p2-section.coord { flex: 3; }
+  .p2-section.suger { flex: 2; }
+  .p2-label { font-size: 11pt; font-weight: bold; margin-bottom: 1mm; flex-shrink: 0; }
+  .p2-box { flex: 1; border: 1px solid #000; width: 100%; min-height: 0; }
+  .p2-sig-row { flex-shrink: 0; margin-top: 4mm; }
+  .p2-sig-row td { text-align: center; height: 22mm; vertical-align: bottom; border: none; border-top: 1px solid #000; }
+  .p2-footer { flex-shrink: 0; margin-top: auto; }
+  .p2-footer img { width: 100%; max-width: 500px; }
   .footer-img { width: 100%; max-width: 500px; margin-top: 6mm; }
 
   @media print {
@@ -468,25 +477,35 @@ export default function Home() {
 
 <!-- ═══════════ HOJA 2: DESCARGOS Y FIRMAS ═══════════ -->
 <div class="page-break"></div>
+<div class="page2">
 
-<div class="p2-title">Descargo del Colaborador</div>
-<div class="p2-box p2-box-colab"></div>
+  <div class="p2-section colab">
+    <div class="p2-label">Descargo del Colaborador</div>
+    <div class="p2-box"></div>
+  </div>
 
-<div class="p2-title" style="margin-top:3mm;">Descargo del Coordinador</div>
-<div class="p2-box p2-box-coord"></div>
+  <div class="p2-section coord">
+    <div class="p2-label">Descargo del Coordinador</div>
+    <div class="p2-box"></div>
+  </div>
 
-<div class="p2-title" style="margin-top:3mm;">Sugerencias / Mejora / Compromiso</div>
-<div class="p2-box p2-box-suger"></div>
+  <div class="p2-section suger">
+    <div class="p2-label">Sugerencias / Mejora / Compromiso</div>
+    <div class="p2-box"></div>
+  </div>
 
-<table class="p2-sig" style="width:100%; border-collapse:collapse;">
-  <tr>
-    <td style="width:33%;">Firma del Colaborador</td>
-    <td style="width:33%;">Firma del Coordinador</td>
-    <td style="width:34%;">Firma de RR.HH.</td>
-  </tr>
-</table>
+  <table class="p2-sig-row" style="width:100%; border-collapse:collapse;">
+    <tr>
+      <td style="width:33%;">Firma del Colaborador</td>
+      <td style="width:33%;">Firma del Coordinador</td>
+      <td style="width:34%;">Firma de RR.HH.</td>
+    </tr>
+  </table>
 
-<img class="footer-img" src="/template_footer.png" alt="Footer">
+  <div class="p2-footer">
+    <img src="/template_footer.png" alt="Footer">
+  </div>
+</div>
 
 <script>setTimeout(()=>{window.print();},500);</script>
 </body></html>`);
