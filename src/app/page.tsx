@@ -384,30 +384,39 @@ export default function Home() {
 <html><head><meta charset="utf-8">
 <title>Pedido de Explicacion - ${sancion.nombre}</title>
 <style>
-  @page { size: A4; margin: 1.5cm; }
+  @page { size: A4; margin: 1.2cm 1.5cm; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: Calibri, Arial, sans-serif; font-size: 10pt; color: #000; }
   .header-img { width: 100%; max-width: 520px; }
-  .title { text-align: center; font-size: 14pt; font-weight: bold; margin: 8px 0 14px; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+  .title { text-align: center; font-size: 14pt; font-weight: bold; margin: 6px 0 10px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
   td, th { border: 1px solid #000; padding: 4px 6px; vertical-align: middle; }
   th, .header-cell { background: #C8C8C8; font-weight: bold; font-size: 10pt; }
-  .box-section { margin: 6px 0; }
-  .box-section h3 { font-size: 12pt; font-weight: bold; margin-bottom: 4px; }
-  .box-table td { height: auto; vertical-align: top; }
-  .comment-box { min-height: 100px; }
-  .comment-box-med { min-height: 80px; }
-  .comment-box-sm { min-height: 60px; }
-  .sig-table td { text-align: center; height: 50px; vertical-align: bottom; }
-  .mov-table { font-size: 8pt; width: auto; margin-top: 8px; }
+  .box-section h3 { font-size: 11pt; font-weight: bold; margin-bottom: 3px; }
+  .mov-table { font-size: 8pt; width: auto; margin-top: 6px; }
   .mov-table th { background: #DDD; font-size: 8pt; }
   .mov-table td, .mov-table th { padding: 2px 4px; }
-  .footer-img { width: 100%; max-width: 700px; margin-top: 20px; }
+  .footer-img { width: 100%; max-width: 700px; margin-top: 12px; }
   .no-print { margin-bottom: 10px; }
+
+  /* Page 2: fill full A4 with flex */
+  .page2 {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(297mm - 2.4cm - 8mm);
+  }
+  .page2 .box-section { flex: 1 1 0; display: flex; flex-direction: column; margin-bottom: 5px; }
+  .page2 .box-section.box-colab { flex: 4; }
+  .page2 .box-section.box-coord { flex: 3; }
+  .page2 .box-section.box-suger { flex: 2; }
+  .page2 .box-fill { flex: 1; border: 1px solid #000; padding: 4px 6px; }
+  .page2 .sig-row { flex-shrink: 0; margin-top: auto; }
+
   @media print {
     .no-print { display: none !important; }
     .page-break { page-break-before: always; }
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .page2 { min-height: auto; }
   }
 </style></head><body>
 <div class="no-print" style="text-align:center;padding:8px;background:#f0f0f0;margin-bottom:10px;">
@@ -416,6 +425,7 @@ export default function Home() {
   </button>
 </div>
 
+<!-- ═══════════ HOJA 1: EVIDENCIA ═══════════ -->
 <img class="header-img" src="/template_header.png" alt="Logo">
 <div class="title">PEDIDO DE EXPLICACION</div>
 
@@ -450,7 +460,7 @@ export default function Home() {
 
 <div class="box-section">
   <h3>Evidencia del Caso</h3>
-  <table class="box-table"><tr><td style="min-height:120px;">
+  <table><tr><td style="min-height:140px; vertical-align:top; padding: 6px;">
     El colaborador ${sancion.nombre} (Legajo ${sancion.codigoEmp}), empleado de ${sancion.empresa}, sector ${sancion.sector}, registro una salida del deposito a las ${sancion.salida} hs y un reingreso a las ${sancion.entrada} hs del dia ${sancion.fecha}, generando un tiempo fuera de deposito de ${sancion.duracion}, superando el tiempo maximo permitido para el periodo correspondiente. Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).
     ${allMov.length > 0 ? `
     <table class="mov-table">
@@ -460,28 +470,38 @@ export default function Home() {
   </td></tr></table>
 </div>
 
+<!-- ═══════════ HOJA 2: DESCARGOS Y FIRMAS ═══════════ -->
 <div class="page-break"></div>
+<div class="page2">
 
-<div class="box-section">
-  <h3>Comentarios del Colaborador</h3>
-  <table class="box-table"><tr><td class="comment-box"></td></tr></table>
+  <div class="box-section box-colab">
+    <h3>Descargo del Colaborador</h3>
+    <div class="box-fill"></div>
+  </div>
+
+  <div class="box-section box-coord">
+    <h3>Descargo del Coordinador</h3>
+    <div class="box-fill"></div>
+  </div>
+
+  <div class="box-section box-suger">
+    <h3>Sugerencias / Mejora / Compromiso</h3>
+    <div class="box-fill"></div>
+  </div>
+
+  <div class="sig-row">
+    <table>
+      <tr>
+        <td style="width:33%; text-align:center; height:55px; vertical-align:bottom; border:none; border-top:1px solid #000;">Firma del Colaborador</td>
+        <td style="width:33%; text-align:center; height:55px; vertical-align:bottom; border:none; border-top:1px solid #000;">Firma del Coordinador</td>
+        <td style="width:34%; text-align:center; height:55px; vertical-align:bottom; border:none; border-top:1px solid #000;">Firma de RR.HH.</td>
+      </tr>
+    </table>
+  </div>
+
+  <img class="footer-img" src="/template_footer.png" alt="Footer">
 </div>
 
-<div class="box-section">
-  <h3>Comentarios del Coordinador</h3>
-  <table class="box-table"><tr><td class="comment-box-med"></td></tr></table>
-</div>
-
-<div class="box-section">
-  <h3>Sugerencias/Mejora / Compromiso</h3>
-  <table class="box-table"><tr><td class="comment-box-sm"></td></tr></table>
-</div>
-
-<table class="sig-table">
-  <tr><td style="width:33%;">Firma de Colaborador</td><td style="width:33%;">Firma del Coordinador</td><td style="width:34%;">Firma de RR.HH.</td></tr>
-</table>
-
-<img class="footer-img" src="/template_footer.png" alt="Footer">
 <script>setTimeout(()=>{window.print();},500);</script>
 </body></html>`);
       win.document.close();
