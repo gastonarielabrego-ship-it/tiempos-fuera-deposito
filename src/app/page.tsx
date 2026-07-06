@@ -306,9 +306,27 @@ export default function Home() {
     }
   }, [showToast, fetchSanciones]);
 
-  const printSancion = useCallback((id: string) => {
-    window.open(`/api/sanciones/${id}/print`, '_blank');
-  }, []);
+  const printSancion = useCallback(async (id: string) => {
+    try {
+      const r = await window.fetch(`/api/sanciones/${id}/print`);
+      if (r.ok) {
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Pedido_Explicacion.docx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      } else {
+        const err = await r.json().catch(() => ({}));
+        showToast(err.error || 'Error al generar documento', 'error');
+      }
+    } catch {
+      showToast('Error de conexion al generar documento', 'error');
+    }
+  }, [showToast]);
 
   const deleteSancion = useCallback(async (id: string) => {
     try {

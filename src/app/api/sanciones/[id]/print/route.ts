@@ -50,331 +50,415 @@ export async function GET(
     const countResult = await db.execute({ sql: 'SELECT COUNT(*) as total FROM Sancion WHERE codigoEmp = ?', args: [String(sancion.codigoEmp)] });
     const sancionNumber = Number((countResult.rows[0] as Record<string, unknown>)?.total ?? 1);
 
-    const pdfBuffer = await generatePDF({ ...sancion, movimientos, faciales, comidas, sancionNumber });
+    const docxBuffer = await generateDocx({ ...sancion, movimientos, faciales, comidas, sancionNumber });
 
-    return new NextResponse(new Uint8Array(pdfBuffer), {
+    const filename = `Pedido_Explicacion_${sancion.nombre.replace(/\s+/g, '_')}_${sancion.fecha}.docx`;
+    return new NextResponse(docxBuffer, {
       headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="Pedido_Explicacion_${sancion.nombre.replace(/\s+/g, '_')}_${sancion.fecha}.pdf"`,
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Disposition': `inline; filename="${filename}"`,
       },
     });
   } catch (error) {
-    console.error('Error printing sancion:', error);
-    return NextResponse.json({ error: 'Error generando PDF', detail: String(error) }, { status: 500 });
+    console.error('Error generando documento:', error);
+    return NextResponse.json({ error: 'Error generando documento', detail: String(error) }, { status: 500 });
   }
 }
 
-async function generatePDF(d: Record<string, unknown>): Promise<Buffer> {
-  const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
-  const pdfDoc = await PDFDocument.create();
+// ─── DOCX Generator ────────────────────────────────────────────────────────────
 
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+async function generateDocx(d: Record<string, unknown>): Promise<Buffer> {
+  const {
+    Document, Packer, Paragraph, Table, TableRow, TableCell,
+    TextRun, WidthType, BorderStyle, AlignmentType,
+    ImageRun, Header, Footer, PageBreak, VerticalAlign,
+    ShadingType, TableLayoutType, convertInchesToTwip,
+  } = await import('docx');
 
-  // Images
-  const headerImgBytes = readFileSync(join(process.cwd(), 'public', 'template_header.png'));
-  const footerImgBytes = readFileSync(join(process.cwd(), 'public', 'template_footer.png'));
-  const headerImg = await pdfDoc.embedPng(headerImgBytes);
-  const footerImg = await pdfDoc.embedPng(footerImgBytes);
+  // Load images
+  const headerImgBuf = readFileSync(join(process.cwd(), 'public', 'template_header.png'));
+  const footerImgBuf = readFileSync(join(process.cwd(), 'public', 'template_footer.png'));
 
-  // A4
-  const pw = 595.28;
-  const ph = 841.89;
-  const mx = 40;
-  const cw = pw - mx * 2;
+  const headerImg = new ImageRun({
+    data: headerImgBuf,
+    transformation: { width: 520, height: 120 },
+    type: 'png',
+  });
 
-  // Color: 0-255 → 0-1
-  const c = (r: number, g: number, b: number) => rgb(r / 255, g / 255, b / 255);
+  const footerImg = new ImageRun({
+    data: footerImgBuf,
+    transformation: { width: 700, height: 210 },
+    type: 'png',
+  });
 
-  // Text wrap helper
-  const wrap = (text: string, sz: number, maxW: number): string[] => {
-    if (!text) return [];
-    const words = text.split(' ');
-    const lines: string[] = [];
-    let cur = '';
-    for (const w of words) {
-      const t = cur ? `${cur} ${w}` : w;
-      if (font.widthOfTextAtSize(t, sz) > maxW && cur) { lines.push(cur); cur = w; }
-      else cur = t;
-    }
-    if (cur) lines.push(cur);
-    return lines;
+  // Borders for tables
+  const cellBorder = {
+    top: { style: BorderStyle.SINGLE, size: 1, color: '000000' },
+    bottom: { style: BorderStyle.SINGLE, size: 1, color: '000000' },
+    left: { style: BorderStyle.SINGLE, size: 1, color: '000000' },
+    right: { style: BorderStyle.SINGLE, size: 1, color: '000000' },
   };
 
-  // Draw header image on a page, returns y below it
-  const drawHeader = (page: import('pdf-lib').PDFPage) => {
-    const w = 380;
-    const h = (headerImg.height / headerImg.width) * w;
-    page.drawImage(headerImg, { x: mx, y: ph - mx - h, width: w, height: h });
-    return ph - mx - h - 10;
+  const noBorder = {
+    top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+    bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+    left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+    right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
   };
 
-  // Draw footer image
-  const drawFooter = (page: import('pdf-lib').PDFPage) => {
-    const w = 515;
-    const h = (footerImg.height / footerImg.width) * w;
-    page.drawImage(footerImg, { x: mx, y: mx - 12, width: w, height: h });
-  };
+  // Shading
+  const grayShading = { type: ShadingType.CLEAR, fill: 'C8C8C8' };
+  const noShading = { type: ShadingType.CLEAR, fill: 'FFFFFF' };
 
-  // Draw bordered text box
-  const drawBox = (page: import('pdf-lib').PDFPage, text: string, x: number, y: number, w: number, h: number) => {
-    page.drawRectangle({ x, y, width: w, height: h, borderColor: c(0, 0, 0), borderWidth: 0.75 });
-    if (!text) return;
-    const lines = wrap(text, 9, w - 14);
-    const lh = 13;
-    let ty = y + h - 14;
-    for (const line of lines) {
-      if (ty < y + 6) break;
-      page.drawText(line, { x: x + 7, y: ty, size: 9, font, color: c(0, 0, 0) });
-      ty -= lh;
-    }
-  };
+  // Cell helpers
+  const headerCell = (text: string, width: number) => new TableCell({
+    width: { size: width, type: WidthType.DXA },
+    borders: cellBorder,
+    shading: grayShading,
+    verticalAlign: VerticalAlign.CENTER,
+    children: [new Paragraph({
+      spacing: { before: 40, after: 40 },
+      children: [new TextRun({ text, bold: true, size: 20, font: 'Calibri' })],
+    })],
+  });
 
-  // ─── PAGE 1 ─────────────────────────────────────────────────────────
-  const p1 = pdfDoc.addPage([pw, ph]);
-  let y = drawHeader(p1);
+  const dataCell = (runs: (TextRun | string)[], width: number, opts?: { bold?: boolean; shading?: typeof grayShading }) => new TableCell({
+    width: { size: width, type: WidthType.DXA },
+    borders: cellBorder,
+    shading: opts?.shading || noShading,
+    verticalAlign: VerticalAlign.CENTER,
+    children: [new Paragraph({
+      spacing: { before: 30, after: 30 },
+      children: runs.map(r => typeof r === 'string' ? new TextRun({ text: r, size: 20, font: 'Calibri', bold: opts?.bold }) : r),
+    })],
+  });
 
-  // Title
-  const title = 'PEDIDO DE EXPLICACION';
-  page1drawTitle(p1, title, pw, y, fontBold, c);
-  y -= 22;
+  const emptyCell = (width: number) => dataCell([''], width);
 
-  // Table: Datos
-  y = drawDatosTable(p1, mx, y, cw, d, font, fontBold, c);
+  // Label run
+  const label = (text: string) => new TextRun({ text, bold: true, size: 20, font: 'Calibri' });
+  const value = (text: string) => new TextRun({ text, size: 20, font: 'Calibri' });
+  const labelVal = (l: string, v: string) => [label(l + ' '), value(v || '-')];
 
-  // Table: Fecha
-  y = drawFechaTable(p1, mx, y, cw, font, c);
-
-  // Table: Incidencia
-  y = drawIncidenciaTable(p1, mx, y, cw, d, font, fontBold, c);
-
-  // Evidence box
-  const evidText = buildEvidenceText(d);
-  y -= 6;
-  const evidH = 140;
-  p1.drawText('Evidencia del Caso', { x: mx, y: y, size: 12, font: fontBold, color: c(0, 0, 0) });
-  y -= 6;
-
-  // Evidence border box
-  p1.drawRectangle({ x: mx, y: y - evidH, width: cw, height: evidH, borderColor: c(0, 0, 0), borderWidth: 0.75 });
+  // Table column widths (DXA = twentieths of a point)
+  const halfW = 4500;
+  const fullW = 9000;
 
   // Evidence text
-  const evidLines = wrap(evidText, 9, cw - 14);
-  let ey = y - 14;
-  for (const line of evidLines) {
-    if (ey < y - evidH + 4) break;
-    p1.drawText(line, { x: mx + 7, y: ey, size: 9, font, color: c(0, 0, 0) });
-    ey -= 12;
-  }
+  const evidencia = `El colaborador ${d.nombre} (Legajo ${d.codigoEmp}), empleado de ${d.empresa}, sector ${d.sector}, registro una salida del deposito a las ${d.salida} hs y un reingreso a las ${d.entrada} hs del dia ${d.fecha}, generando un tiempo fuera de deposito de ${d.duracion}, superando el tiempo maximo permitido para el periodo correspondiente. Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).`;
 
-  // Movements mini-table inside evidence
-  const allMov = buildAllMovements(d);
-  if (allMov.length > 0) {
-    drawMovementsTable(p1, mx + 14, y - evidH + 8, allMov, font, fontBold, c);
-  }
+  // Build movements text
+  const allMov = [
+    ...(d.movimientos as { hora: string; terminal: string }[]).map(m => `${m.hora} - ${m.terminal} (Acceso)`),
+    ...(d.faciales as { hora: string; zona: string }[]).map(f => `${f.hora} - ${f.zona || 'Facial'} (Facial)`),
+    ...(d.comidas as string[]).map(h => `${h} - TK Comida (Comida)`),
+  ].sort();
 
-  drawFooter(p1);
+  const movText = allMov.length > 0
+    ? 'Movimientos del dia:\n' + allMov.map((m, i) => `  ${i + 1}. ${m}`).join('\n')
+    : 'Sin movimientos registrados.';
 
-  // ─── PAGE 2 ────────────────────────────────────────────────────────
-  const p2 = pdfDoc.addPage([pw, ph]);
-  y = drawHeader(p2);
-  y -= 10;
-
-  // Comentarios del Colaborador
-  p2.drawText('Comentarios del Colaborador', { x: mx, y: y, size: 12, font: fontBold, color: c(0, 0, 0) });
-  y -= 6;
-  drawBox(p2, '', mx, y - 160, cw, 160);
-  y -= 172;
-
-  // Comentarios del Coordinador
-  p2.drawText('Comentarios del Coordinador', { x: mx, y: y, size: 12, font: fontBold, color: c(0, 0, 0) });
-  y -= 6;
-  drawBox(p2, '', mx, y - 120, cw, 120);
-  y -= 132;
-
-  // Sugerencias/Mejora / Compromiso
-  p2.drawText('Sugerencias/Mejora / Compromiso', { x: mx, y: y, size: 12, font: fontBold, color: c(0, 0, 0) });
-  y -= 6;
-  drawBox(p2, '', mx, y - 100, cw, 100);
-  y -= 120;
-
-  // Signatures
-  const sigH = 50;
-  const sigY = y - sigH;
-  const sigCW = cw / 3;
-  p2.drawRectangle({ x: mx, y: sigY, width: cw, height: sigH, borderColor: c(0, 0, 0), borderWidth: 0.75 });
-  p2.drawLine({ start: { x: mx + sigCW, y: sigY }, end: { x: mx + sigCW, y: sigY + sigH }, thickness: 0.75, color: c(0, 0, 0) });
-  p2.drawLine({ start: { x: mx + sigCW * 2, y: sigY }, end: { x: mx + sigCW * 2, y: sigY + sigH }, thickness: 0.75, color: c(0, 0, 0) });
-
-  const sigLabels = ['Firma de Colaborador', 'Firma del Coordinador', 'Firma de RR.HH.'];
-  sigLabels.forEach((label, i) => {
-    const lw = font.widthOfTextAtSize(label, 9);
-    p2.drawText(label, { x: mx + sigCW * i + (sigCW - lw) / 2, y: sigY + 8, size: 9, font, color: c(0, 0, 0) });
-  });
-
-  drawFooter(p2);
-
-  const pdfBytes = await pdfDoc.save();
-  return Buffer.from(pdfBytes);
-}
-
-// ─── Sub-drawing functions (pure, no side effects) ────────────────────
-
-function page1drawTitle(page: import('pdf-lib').PDFPage, title: string, pw: number, y: number, fontBold: any, c: (r: number, g: number, b: number) => any) {
-  const tw = fontBold.widthOfTextAtSize(title, 14);
-  page.drawText(title, { x: (pw - tw) / 2, y: y - 4, size: 14, font: fontBold, color: c(0, 0, 0) });
-}
-
-function drawDatosTable(page: import('pdf-lib').PDFPage, x: number, y: number, w: number, d: Record<string, unknown>, font: any, fontBold: any, c: (r: number, g: number, b: number) => any): number {
-  const rowH = [22, 20, 20, 20, 20, 20];
-  const totalH = rowH.reduce((a, b) => a + b, 0);
-  const top = y - totalH;
-
-  // Border
-  page.drawRectangle({ x, y: top, width: w, height: totalH, borderColor: c(0, 0, 0), borderWidth: 0.75 });
-
-  // Header row bg
-  page.drawRectangle({ x, y: top, width: w, height: rowH[0], color: c(200, 200, 200) });
-  page.drawLine({ start: { x, y: top + rowH[0] }, end: { x: x + w, y: top + rowH[0] }, thickness: 0.75, color: c(0, 0, 0) });
-
-  // Header text
-  page.drawText('Datos del Colaborador', { x: x + 6, y: top + 6, size: 10, font: fontBold, color: c(0, 0, 0) });
-  page.drawText('Datos de Coordinadores', { x: x + w / 2 + 6, y: top + 6, size: 10, font: fontBold, color: c(0, 0, 0) });
-
-  // Column divider
-  page.drawLine({ start: { x: x + w / 2, y: top }, end: { x: x + w / 2, y: top + totalH }, thickness: 0.75, color: c(0, 0, 0) });
-
-  // Row dividers
-  let ry = top + rowH[0];
-  for (let i = 1; i < 5; i++) { ry += rowH[i]; page.drawLine({ start: { x, y: ry }, end: { x: x + w, y: ry }, thickness: 0.75, color: c(0, 0, 0) }); }
-
-  // Data
-  const left = [
-    { l: 'Apellido y Nombre:', v: String(d.nombre) },
-    { l: 'Legajo:', v: String(d.codigoEmp) },
-    { l: 'Sector:', v: 'PREPARACION' },
-    { l: 'Funcion:', v: 'PREPARADOR' },
-    { l: 'Turno:', v: String(d.jornada) },
-  ];
-  const right = [
-    { l: 'Apellido y Nombre:', v: '' },
-    { l: 'Sector:', v: '' },
-    { l: 'Interviene por RR.HH.', v: '' },
-    { l: 'Apellido y Nombre:', v: '' },
-    { l: '', v: '' },
-  ];
-
-  let dy = top + rowH[0] + rowH[1] - 6;
-  for (let i = 0; i < 5; i++) {
-    page.drawText(left[i].l, { x: x + 6, y: dy, size: 10, font, color: c(0, 0, 0) });
-    if (left[i].v) page.drawText(left[i].v, { x: x + 6 + font.widthOfTextAtSize(left[i].l + ' ', 10), y: dy, size: 10, font, color: c(0, 0, 0) });
-    if (right[i].l) page.drawText(right[i].l, { x: x + w / 2 + 6, y: dy, size: 10, font, color: c(0, 0, 0) });
-    if (right[i].v) page.drawText(right[i].v, { x: x + w / 2 + 6 + font.widthOfTextAtSize(right[i].l + ' ', 10), y: dy, size: 10, font, color: c(0, 0, 0) });
-    dy -= rowH[i + 1];
-  }
-
-  return top - 10;
-}
-
-function drawFechaTable(page: import('pdf-lib').PDFPage, x: number, y: number, w: number, font: any, c: (r: number, g: number, b: number) => any): number {
-  const h = 24;
-  page.drawRectangle({ x, y: y - h, width: w, height: h, borderColor: c(0, 0, 0), borderWidth: 0.75 });
   const today = new Date().toISOString().split('T')[0];
-  const [yr, mo, dy2] = today.split('-');
-  page.drawText(`Fecha: ${dy2} / ${mo} / ${yr}`, { x: x + 6, y: y - h + 7, size: 10, font, color: c(0, 0, 0) });
-  return y - h - 10;
-}
+  const [yr, mo, dy] = today.split('-');
 
-function drawIncidenciaTable(page: import('pdf-lib').PDFPage, x: number, y: number, w: number, d: Record<string, unknown>, font: any, fontBold: any, c: (r: number, g: number, b: number) => any): number {
-  const colW = [w * 0.42, w * 0.58];
-  const h1 = 22;
-  const h2 = 80;
-  const totalH = h1 + h2;
+  const doc = new Document({
+    styles: { default: { document: { run: { font: 'Calibri', size: 20 } } } },
+    sections: [
+      {
+        headers: {
+          default: new Header({
+            children: [new Paragraph({
+              children: [headerImg],
+              spacing: { after: 0 },
+            })],
+          }),
+        },
+        footers: {
+          default: new Footer({
+            children: [new Paragraph({
+              children: [footerImg],
+              spacing: { before: 0, after: 0 },
+            })],
+          }),
+        },
+        children: [
+          // Title
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 100, after: 200 },
+            children: [new TextRun({ text: 'PEDIDO DE EXPLICACION', bold: true, size: 28, font: 'Calibri' })],
+          }),
 
-  // Border
-  page.drawRectangle({ x, y: y - totalH, width: w, height: totalH, borderColor: c(0, 0, 0), borderWidth: 0.75 });
+          // ── Table 0: Datos del Colaborador | Datos de Coordinadores ──
+          new Table({
+            width: { size: fullW, type: WidthType.DXA },
+            layout: TableLayoutType.FIXED,
+            rows: [
+              new TableRow({
+                children: [
+                  headerCell('Datos del Colaborador', halfW),
+                  headerCell('Datos de Coordinadores', halfW),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  dataCell(labelVal('Apellido y Nombre:', String(d.nombre)), halfW),
+                  dataCell(labelVal('Apellido y Nombre:', ''), halfW),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  dataCell(labelVal('Legajo:', String(d.codigoEmp)), halfW),
+                  dataCell(labelVal('Sector:', ''), halfW),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  dataCell(labelVal('Sector:', 'PREPARACION'), halfW),
+                  dataCell([label('Interviene por RR.HH. ')], halfW),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  dataCell(labelVal('Funcion:', 'PREPARADOR'), halfW),
+                  dataCell(labelVal('Apellido y Nombre:', ''), halfW),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  dataCell(labelVal('Turno:', String(d.jornada)), halfW),
+                  emptyCell(halfW),
+                ],
+              }),
+            ],
+          }),
 
-  // Header bg + text
-  page.drawRectangle({ x, y: y - h1, width: w, height: h1, color: c(200, 200, 200) });
-  page.drawLine({ start: { x, y: y - h1 }, end: { x: x + w, y: y - h1 }, thickness: 0.75, color: c(0, 0, 0) });
-  page.drawText('Incidencia Proceso Operaciones', { x: x + 6, y: y - h1 + 6, size: 12, font: fontBold, color: c(0, 0, 0) });
+          // Spacer
+          new Paragraph({ spacing: { before: 100, after: 0 }, children: [] }),
 
-  // Column divider
-  page.drawLine({ start: { x: x + colW[0], y: y - totalH }, end: { x: x + colW[0], y: y }, thickness: 0.75, color: c(0, 0, 0) });
+          // ── Table 1: Fecha ──
+          new Table({
+            width: { size: fullW, type: WidthType.DXA },
+            layout: TableLayoutType.FIXED,
+            rows: [
+              new TableRow({
+                children: [
+                  new TableCell({
+                    width: { size: fullW, type: WidthType.DXA },
+                    borders: cellBorder,
+                    children: [new Paragraph({
+                      spacing: { before: 40, after: 40 },
+                      children: [new TextRun({ text: `Fecha: ${dy} / ${mo} / ${yr}`, size: 20, font: 'Calibri' })],
+                    })],
+                  }),
+                ],
+              }),
+            ],
+          }),
 
-  // Left: tipo
-  const tipoText = String(d.tipoLabel || d.tipo || '').toUpperCase();
-  page.drawText(tipoText, { x: x + 6, y: y - h1 - 8, size: 10, font, color: c(0, 0, 0) });
+          // Spacer
+          new Paragraph({ spacing: { before: 100, after: 0 }, children: [] }),
 
-  // Right: summary
-  const summary = [
-    `Colaborador: ${d.nombre} (Legajo: ${d.codigoEmp})`,
-    `Empresa: ${d.empresa} | Sector: ${d.sector}`,
-    `Fecha del hecho: ${d.fecha}`,
-    `Salida del deposito: ${d.salida} hs`,
-    `Reingreso al deposito: ${d.entrada} hs`,
-    `Tiempo fuera de deposito: ${d.duracion}`,
-    `Exceso supera el maximo permitido.`,
-  ];
-  let sy = y - h1 - 8;
-  for (const line of summary) {
-    page.drawText(line, { x: x + colW[0] + 6, y: sy, size: 9, font, color: c(0, 0, 0) });
-    sy -= 11;
-  }
+          // ── Table 2: Incidencia Proceso Operaciones ──
+          new Table({
+            width: { size: fullW, type: WidthType.DXA },
+            layout: TableLayoutType.FIXED,
+            rows: [
+              new TableRow({
+                children: [
+                  new TableCell({
+                    width: { size: fullW, type: WidthType.DXA },
+                    borders: cellBorder,
+                    shading: grayShading,
+                    columnSpan: 2,
+                    children: [new Paragraph({
+                      spacing: { before: 40, after: 40 },
+                      children: [new TextRun({ text: 'Incidencia Proceso Operaciones', bold: true, size: 24, font: 'Calibri' })],
+                    })],
+                  }),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  dataCell([value(String(d.tipoLabel || d.tipo || '').toUpperCase())], 3800),
+                  dataCell([
+                    value(`Colaborador: ${d.nombre} (Legajo: ${d.codigoEmp})`),
+                    new TextRun({ text: '', break: 1, size: 20 }),
+                    value(`Empresa: ${d.empresa} | Sector: ${d.sector}`),
+                    new TextRun({ text: '', break: 1, size: 20 }),
+                    value(`Fecha del hecho: ${d.fecha}`),
+                    new TextRun({ text: '', break: 1, size: 20 }),
+                    value(`Salida del deposito: ${d.salida} hs`),
+                    new TextRun({ text: '', break: 1, size: 20 }),
+                    value(`Reingreso al deposito: ${d.entrada} hs`),
+                    new TextRun({ text: '', break: 1, size: 20 }),
+                    value(`Tiempo fuera de deposito: ${d.duracion}`),
+                    new TextRun({ text: '', break: 1, size: 20 }),
+                    value('Exceso supera el maximo permitido.'),
+                  ], 5200),
+                ],
+              }),
+            ],
+          }),
 
-  return y - totalH - 10;
-}
+          // Spacer
+          new Paragraph({ spacing: { before: 200, after: 100 }, children: [] }),
 
-function buildEvidenceText(d: Record<string, unknown>): string {
-  return `El colaborador ${d.nombre} (Legajo ${d.codigoEmp}), empleado de ${d.empresa}, sector ${d.sector}, registro una salida del deposito a las ${d.salida} hs y un reingreso a las ${d.entrada} hs del dia ${d.fecha}, generando un tiempo fuera de deposito de ${d.duracion}, superando el tiempo maximo permitido para el periodo correspondiente. Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).`;
-}
+          // ── Section: Evidencia del Caso ──
+          new Paragraph({
+            spacing: { before: 100, after: 100 },
+            children: [new TextRun({ text: 'Evidencia del Caso', bold: true, size: 24, font: 'Calibri' })],
+          }),
+          new Table({
+            width: { size: fullW, type: WidthType.DXA },
+            layout: TableLayoutType.FIXED,
+            rows: [
+              new TableRow({
+                height: { value: 3600, rule: 'atLeast' as any },
+                children: [
+                  new TableCell({
+                    width: { size: fullW, type: WidthType.DXA },
+                    borders: cellBorder,
+                    children: [
+                      new Paragraph({
+                        spacing: { before: 60, after: 60 },
+                        children: [new TextRun({ text: evidencia, size: 20, font: 'Calibri' })],
+                      }),
+                      new Paragraph({ spacing: { before: 100, after: 60 }, children: [new TextRun({ text: movText, size: 18, font: 'Calibri', color: '444444' })] }),
+                    ],
+                  }),
+                ],
+              }),
+            ],
+          }),
 
-function buildAllMovements(d: Record<string, unknown>): { hora: string; evento: string; tipo: string }[] {
-  return [
-    ...(d.movimientos as { hora: string; terminal: string }[]).map(m => ({ hora: m.hora, evento: m.terminal, tipo: 'Acceso' })),
-    ...(d.faciales as { hora: string; zona: string }[]).map(f => ({ hora: f.hora, evento: f.zona || 'Facial', tipo: 'Facial' })),
-    ...(d.comidas as string[]).map(h => ({ hora: h, evento: 'TK Comida', tipo: 'Comida' })),
-  ].sort((a, b) => {
-    const pa = a.hora.split(':').map(Number);
-    const pb = b.hora.split(':').map(Number);
-    return (pa[0] * 3600 + pa[1] * 60 + (pa[2] || 0)) - (pb[0] * 3600 + pb[1] * 60 + (pb[2] || 0));
+          // Page break
+          new Paragraph({ children: [new PageBreak()] }),
+
+          // ── PAGE 2: Comentarios ──
+
+          // Comentarios del Colaborador
+          new Paragraph({
+            spacing: { before: 100, after: 100 },
+            children: [new TextRun({ text: 'Comentarios del Colaborador', bold: true, size: 24, font: 'Calibri' })],
+          }),
+          new Table({
+            width: { size: fullW, type: WidthType.DXA },
+            layout: TableLayoutType.FIXED,
+            rows: [
+              new TableRow({
+                height: { value: 4000, rule: 'atLeast' as any },
+                children: [
+                  new TableCell({
+                    width: { size: fullW, type: WidthType.DXA },
+                    borders: cellBorder,
+                    children: [new Paragraph({ children: [] })],
+                  }),
+                ],
+              }),
+            ],
+          }),
+
+          // Spacer
+          new Paragraph({ spacing: { before: 200, after: 100 }, children: [] }),
+
+          // Comentarios del Coordinador
+          new Paragraph({
+            spacing: { before: 100, after: 100 },
+            children: [new TextRun({ text: 'Comentarios del Coordinador', bold: true, size: 24, font: 'Calibri' })],
+          }),
+          new Table({
+            width: { size: fullW, type: WidthType.DXA },
+            layout: TableLayoutType.FIXED,
+            rows: [
+              new TableRow({
+                height: { value: 3000, rule: 'atLeast' as any },
+                children: [
+                  new TableCell({
+                    width: { size: fullW, type: WidthType.DXA },
+                    borders: cellBorder,
+                    children: [new Paragraph({ children: [] })],
+                  }),
+                ],
+              }),
+            ],
+          }),
+
+          // Spacer
+          new Paragraph({ spacing: { before: 200, after: 100 }, children: [] }),
+
+          // Sugerencias/Mejora / Compromiso
+          new Paragraph({
+            spacing: { before: 100, after: 100 },
+            children: [new TextRun({ text: 'Sugerencias/Mejora / Compromiso', bold: true, size: 24, font: 'Calibri' })],
+          }),
+          new Table({
+            width: { size: fullW, type: WidthType.DXA },
+            layout: TableLayoutType.FIXED,
+            rows: [
+              new TableRow({
+                height: { value: 2400, rule: 'atLeast' as any },
+                children: [
+                  new TableCell({
+                    width: { size: fullW, type: WidthType.DXA },
+                    borders: cellBorder,
+                    children: [new Paragraph({ children: [] })],
+                  }),
+                ],
+              }),
+            ],
+          }),
+
+          // Spacer
+          new Paragraph({ spacing: { before: 300, after: 0 }, children: [] }),
+
+          // ── Signatures Table ──
+          new Table({
+            width: { size: fullW, type: WidthType.DXA },
+            layout: TableLayoutType.FIXED,
+            rows: [
+              new TableRow({
+                height: { value: 1200, rule: 'atLeast' as any },
+                children: [
+                  new TableCell({
+                    width: { size: 3000, type: WidthType.DXA },
+                    borders: cellBorder,
+                    verticalAlign: VerticalAlign.BOTTOM,
+                    children: [new Paragraph({
+                      alignment: AlignmentType.CENTER,
+                      spacing: { before: 40, after: 40 },
+                      children: [new TextRun({ text: 'Firma de Colaborador', size: 20, font: 'Calibri' })],
+                    })],
+                  }),
+                  new TableCell({
+                    width: { size: 3000, type: WidthType.DXA },
+                    borders: cellBorder,
+                    verticalAlign: VerticalAlign.BOTTOM,
+                    children: [new Paragraph({
+                      alignment: AlignmentType.CENTER,
+                      spacing: { before: 40, after: 40 },
+                      children: [new TextRun({ text: 'Firma del Coordinador', size: 20, font: 'Calibri' })],
+                    })],
+                  }),
+                  new TableCell({
+                    width: { size: 3000, type: WidthType.DXA },
+                    borders: cellBorder,
+                    verticalAlign: VerticalAlign.BOTTOM,
+                    children: [new Paragraph({
+                      alignment: AlignmentType.CENTER,
+                      spacing: { before: 40, after: 40 },
+                      children: [new TextRun({ text: 'Firma de RR.HH.', size: 20, font: 'Calibri' })],
+                    })],
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      },
+    ],
   });
-}
 
-function drawMovementsTable(page: import('pdf-lib').PDFPage, x: number, y: number, movs: { hora: string; evento: string; tipo: string }[], font: any, fontBold: any, c: (r: number, g: number, b: number) => any) {
-  const colW = [25, 50, 180, 65];
-  const rh = 12;
-  const tw = colW.reduce((a, b) => a + b, 0);
-  const th = (movs.length + 1) * rh;
-
-  // Header bg
-  page.drawRectangle({ x, y: y - th, width: tw, height: rh, color: c(220, 220, 220) });
-  page.drawRectangle({ x, y: y - th, width: tw, height: th, borderColor: c(100, 100, 100), borderWidth: 0.5 });
-
-  const headers = ['#', 'Hora', 'Evento', 'Tipo'];
-  let hx = x + 2;
-  headers.forEach((h, i) => {
-    page.drawText(h, { x: hx, y: y - rh + 3, size: 7, font: fontBold, color: c(50, 50, 50) });
-    hx += colW[i];
-  });
-
-  // Rows
-  for (let i = 0; i < movs.length; i++) {
-    const ry = y - rh * (i + 1);
-    page.drawLine({ start: { x, y: ry }, end: { x: x + tw, y: ry }, thickness: 0.3, color: c(150, 150, 150) });
-
-    const m = movs[i];
-    let rx = x + 2;
-    page.drawText(String(i + 1), { x: rx, y: ry + 3, size: 7, font, color: c(60, 60, 60) });
-    rx += colW[0];
-    page.drawText(m.hora, { x: rx, y: ry + 3, size: 7, font, color: c(60, 60, 60) });
-    rx += colW[1];
-    page.drawText(m.evento, { x: rx, y: ry + 3, size: 7, font, color: c(60, 60, 60) });
-    rx += colW[2];
-    let tc: [number, number, number] = [120, 120, 120];
-    if (m.tipo === 'Acceso') tc = m.evento.includes('Salida') ? [180, 0, 0] : [0, 120, 0];
-    else if (m.tipo === 'Facial') tc = [0, 0, 180];
-    else if (m.tipo === 'Comida') tc = [180, 100, 0];
-    page.drawText(m.tipo, { x: rx, y: ry + 3, size: 7, font, color: c(tc[0], tc[1], tc[2]) });
-  }
+  const buffer = await Packer.toBuffer(doc);
+  return Buffer.from(buffer);
 }
