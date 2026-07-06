@@ -402,11 +402,12 @@ export default function Home() {
   /* Page 2: fixed mm heights to fill A4 (297mm - 2.4cm margins = 273mm usable) */
   .p2-title { font-size: 11pt; font-weight: bold; margin-bottom: 2mm; }
   .p2-box { border: 1px solid #000; width: 100%; }
-  .p2-box-colab { height: 90mm; }
-  .p2-box-coord { height: 60mm; }
-  .p2-box-suger { height: 45mm; }
-  .p2-sig { margin-top: 8mm; }
-  .p2-sig td { text-align: center; height: 25mm; vertical-align: bottom; border: none; border-top: 1px solid #000; }
+  .p2-box-colab { height: 82mm; }
+  .p2-box-coord { height: 58mm; }
+  .p2-box-suger { height: 40mm; }
+  .p2-sig { margin-top: 6mm; }
+  .p2-sig td { text-align: center; height: 22mm; vertical-align: bottom; border: none; border-top: 1px solid #000; }
+  .footer-img { width: 100%; max-width: 500px; margin-top: 6mm; }
 
   @media print {
     .no-print { display: none !important; }
@@ -471,10 +472,10 @@ export default function Home() {
 <div class="p2-title">Descargo del Colaborador</div>
 <div class="p2-box p2-box-colab"></div>
 
-<div class="p2-title" style="margin-top:5mm;">Descargo del Coordinador</div>
+<div class="p2-title" style="margin-top:3mm;">Descargo del Coordinador</div>
 <div class="p2-box p2-box-coord"></div>
 
-<div class="p2-title" style="margin-top:5mm;">Sugerencias / Mejora / Compromiso</div>
+<div class="p2-title" style="margin-top:3mm;">Sugerencias / Mejora / Compromiso</div>
 <div class="p2-box p2-box-suger"></div>
 
 <table class="p2-sig" style="width:100%; border-collapse:collapse;">
