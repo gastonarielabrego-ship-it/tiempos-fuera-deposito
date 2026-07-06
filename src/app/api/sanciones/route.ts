@@ -4,7 +4,7 @@ import { db } from '@/lib/db';
 async function ensureTable() {
   await db.execute({
     sql: `CREATE TABLE IF NOT EXISTS Sancion (
-      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8))) || '-' || lower(hex(randomblob(4))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab', abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2)),2) || '-' || lower(hex(randomblob(12)))),
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8))) || '-' || lower(hex(randomblob(4))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab', abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(12)))),
       codigoEmp INTEGER NOT NULL,
       nombre TEXT NOT NULL,
       empresa TEXT NOT NULL DEFAULT '',
