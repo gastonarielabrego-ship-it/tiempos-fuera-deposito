@@ -308,23 +308,139 @@ export default function Home() {
 
   const printSancion = useCallback(async (id: string) => {
     try {
-      const r = await window.fetch(`/api/sanciones/${id}/print`);
-      if (r.ok) {
-        const blob = await r.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `Pedido_Explicacion.docx`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 10000);
-      } else {
-        const err = await r.json().catch(() => ({}));
-        showToast(err.error || 'Error al generar documento', 'error');
-      }
+      const r = await window.fetch(`/api/sanciones/${id}`);
+      if (!r.ok) { showToast('Error al obtener sancion', 'error'); return; }
+      const sancion = await r.json();
+
+      // Fetch movements
+      const [movR, facR, comR] = await Promise.all([
+        window.fetch(`/api/sanciones/${id}/movimientos`),
+        window.fetch(`/api/sanciones/${id}/movimientos?type=facial`),
+        window.fetch(`/api/sanciones/${id}/movimientos?type=comida`),
+      ]);
+      const movimientos = movR.ok ? await movR.json() : [];
+      const faciales = facR.ok ? await facR.json() : [];
+      const comidas = comR.ok ? await comR.json() : [];
+
+      const allMov = [
+        ...movimientos.map((m: { hora: string; terminal: string }) => ({ hora: m.hora, evento: m.terminal, tipo: 'Acceso' })),
+        ...faciales.map((f: { hora: string; zona: string }) => ({ hora: f.hora, evento: f.zona || 'Facial', tipo: 'Facial' })),
+        ...comidas.map((h: string) => ({ hora: h, evento: 'TK Comida', tipo: 'Comida' })),
+      ].sort((a: { hora: string }, b: { hora: string }) => a.hora.localeCompare(b.hora));
+
+      const today = new Date().toISOString().split('T')[0];
+      const [yr, mo, dy] = today.split('-');
+
+      const win = window.open('', '_blank', 'width=800,height=1000');
+      if (!win) { showToast('Permite ventanas emergentes para imprimir', 'error'); return; }
+
+      win.document.write(`<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>Pedido de Explicacion - ${sancion.nombre}</title>
+<style>
+  @page { size: A4; margin: 1.5cm; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 10pt; color: #000; }
+  .header-img { width: 100%; max-width: 520px; }
+  .title { text-align: center; font-size: 14pt; font-weight: bold; margin: 8px 0 14px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+  td, th { border: 1px solid #000; padding: 4px 6px; vertical-align: middle; }
+  th, .header-cell { background: #C8C8C8; font-weight: bold; font-size: 10pt; }
+  .box-section { margin: 6px 0; }
+  .box-section h3 { font-size: 12pt; font-weight: bold; margin-bottom: 4px; }
+  .box-table td { height: auto; vertical-align: top; }
+  .comment-box { min-height: 100px; }
+  .comment-box-med { min-height: 80px; }
+  .comment-box-sm { min-height: 60px; }
+  .sig-table td { text-align: center; height: 50px; vertical-align: bottom; }
+  .mov-table { font-size: 8pt; width: auto; margin-top: 8px; }
+  .mov-table th { background: #DDD; font-size: 8pt; }
+  .mov-table td, .mov-table th { padding: 2px 4px; }
+  .footer-img { width: 100%; max-width: 700px; margin-top: 20px; }
+  .no-print { margin-bottom: 10px; }
+  @media print {
+    .no-print { display: none !important; }
+    .page-break { page-break-before: always; }
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style></head><body>
+<div class="no-print" style="text-align:center;padding:8px;background:#f0f0f0;margin-bottom:10px;">
+  <button onclick="window.print()" style="padding:8px 24px;font-size:12pt;cursor:pointer;border:1px solid #999;border-radius:4px;background:#fff;">
+    Imprimir
+  </button>
+</div>
+
+<img class="header-img" src="/template_header.png" alt="Logo">
+<div class="title">PEDIDO DE EXPLICACION</div>
+
+<table>
+  <tr><th class="header-cell">Datos del Colaborador</th><th class="header-cell">Datos de Coordinadores</th></tr>
+  <tr><td><b>Apellido y Nombre:</b> ${sancion.nombre || '-'}</td><td><b>Apellido y Nombre:</b> </td></tr>
+  <tr><td><b>Legajo:</b> ${sancion.codigoEmp || '-'}</td><td><b>Sector:</b> </td></tr>
+  <tr><td><b>Sector:</b> PREPARACION</td><td><b>Interviene por RR.HH.</b> </td></tr>
+  <tr><td><b>Funcion:</b> PREPARADOR</td><td><b>Apellido y Nombre:</b> </td></tr>
+  <tr><td><b>Turno:</b> ${sancion.jornada || '-'}</td><td></td></tr>
+</table>
+
+<table>
+  <tr><td><b>Fecha:</b> ${dy} / ${mo} / ${yr}</td></tr>
+</table>
+
+<table>
+  <tr><th colspan="2" class="header-cell" style="font-size:12pt;">Incidencia Proceso Operaciones</th></tr>
+  <tr>
+    <td style="width:42%;"><b>${(sancion.tipoLabel || sancion.tipo || '').toUpperCase()}</b></td>
+    <td style="width:58%;">
+      Colaborador: ${sancion.nombre} (Legajo: ${sancion.codigoEmp})<br>
+      Empresa: ${sancion.empresa} | Sector: ${sancion.sector}<br>
+      Fecha del hecho: ${sancion.fecha}<br>
+      Salida del deposito: ${sancion.salida} hs<br>
+      Reingreso al deposito: ${sancion.entrada} hs<br>
+      Tiempo fuera de deposito: ${sancion.duracion}<br>
+      Exceso supera el maximo permitido.
+    </td>
+  </tr>
+</table>
+
+<div class="box-section">
+  <h3>Evidencia del Caso</h3>
+  <table class="box-table"><tr><td style="min-height:120px;">
+    El colaborador ${sancion.nombre} (Legajo ${sancion.codigoEmp}), empleado de ${sancion.empresa}, sector ${sancion.sector}, registro una salida del deposito a las ${sancion.salida} hs y un reingreso a las ${sancion.entrada} hs del dia ${sancion.fecha}, generando un tiempo fuera de deposito de ${sancion.duracion}, superando el tiempo maximo permitido para el periodo correspondiente. Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).
+    ${allMov.length > 0 ? `
+    <table class="mov-table">
+      <tr><th>#</th><th>Hora</th><th>Evento / Movimiento</th><th>Tipo</th></tr>
+      ${allMov.map((m: { hora: string; evento: string; tipo: string }, i: number) => `<tr><td>${i + 1}</td><td>${m.hora}</td><td>${m.evento}</td><td>${m.tipo}</td></tr>`).join('')}
+    </table>` : ''}
+  </td></tr></table>
+</div>
+
+<div class="page-break"></div>
+
+<div class="box-section">
+  <h3>Comentarios del Colaborador</h3>
+  <table class="box-table"><tr><td class="comment-box"></td></tr></table>
+</div>
+
+<div class="box-section">
+  <h3>Comentarios del Coordinador</h3>
+  <table class="box-table"><tr><td class="comment-box-med"></td></tr></table>
+</div>
+
+<div class="box-section">
+  <h3>Sugerencias/Mejora / Compromiso</h3>
+  <table class="box-table"><tr><td class="comment-box-sm"></td></tr></table>
+</div>
+
+<table class="sig-table">
+  <tr><td style="width:33%;">Firma de Colaborador</td><td style="width:33%;">Firma del Coordinador</td><td style="width:34%;">Firma de RR.HH.</td></tr>
+</table>
+
+<img class="footer-img" src="/template_footer.png" alt="Footer">
+<script>setTimeout(()=>{window.print();},500);</script>
+</body></html>`);
+      win.document.close();
     } catch {
-      showToast('Error de conexion al generar documento', 'error');
+      showToast('Error al imprimir', 'error');
     }
   }, [showToast]);
 
@@ -990,7 +1106,7 @@ function SancionesTabContent({ sanciones, stats, onPrint, onDelete, openProfile,
                           <button onClick={() => onPrint(s.id)}
                             className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 transition-colors"
                             title="Imprimir Pedido de Explicacion">
-                            <Printer className="h-3 w-3" /> PDF
+                            <Printer className="h-3 w-3" /> Imprimir
                           </button>
                           <button onClick={() => { if (confirm('Eliminar esta sancion?')) onDelete(s.id); }}
                             className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-1 rounded bg-gray-50 text-gray-500 hover:bg-red-50 hover:text-red-600 border border-gray-200 hover:border-red-200 transition-colors"
