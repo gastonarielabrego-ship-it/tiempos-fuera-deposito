@@ -13,6 +13,9 @@ export async function POST(request: NextRequest) {
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
 
+    // Ensure dni column exists
+    await db.execute({ sql: "ALTER TABLE AccessRecord ADD COLUMN dni TEXT", args: [] }).catch(() => {});
+
     await db.execute({ sql: 'DELETE FROM AccessRecord', args: [] });
 
     const values: unknown[][] = [];
@@ -26,8 +29,10 @@ export async function POST(request: NextRequest) {
       const hora = parseExcelTime(row['__EMPTY'] || row['Hora'] || row['hora'] || '');
       if (!fecha) continue;
 
+      const dni = String(row['DNI'] || '').trim();
+
       values.push([
-        crypto.randomUUID(), codigoEmp, nombre, fecha, hora,
+        crypto.randomUUID(), codigoEmp, nombre, dni, fecha, hora,
         String(row['Terminal'] || ''), String(row['Jornada efectiva'] || ''),
         String(row['Sector'] || ''), String(row['Código de empresa'] || ''),
       ]);
@@ -35,8 +40,8 @@ export async function POST(request: NextRequest) {
 
     if (values.length > 0) {
       await db.batch(values.map(v => ({
-        sql: `INSERT INTO AccessRecord (id, codigoEmp, nombre, fecha, hora, terminal, jornada, sector, empresa, createdAt)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+        sql: `INSERT INTO AccessRecord (id, codigoEmp, nombre, dni, fecha, hora, terminal, jornada, sector, empresa, createdAt)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
         args: v,
       })));
     }
