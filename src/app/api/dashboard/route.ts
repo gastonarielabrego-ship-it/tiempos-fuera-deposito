@@ -33,28 +33,35 @@ interface TurnoRanking { turno: string; label: string; totalFueraSegundos: numbe
 
 export async function GET() {
   try {
-    // Ensure AuxRecord table exists (for first deploy / migration)
-    await db.execute({
-      sql: `CREATE TABLE IF NOT EXISTS AuxRecord (
-        id TEXT PRIMARY KEY,
-        dni TEXT,
-        nombre TEXT,
-        fecha TEXT,
-        hora TEXT,
-        tipo TEXT,
-        detalle TEXT,
-        createdAt TEXT
-      )`,
-      args: [],
-    }).catch(() => {});
+    // Try to create AuxRecord table (may fail on some Turso configs - that's OK)
+    try {
+      await db.execute({
+        sql: `CREATE TABLE IF NOT EXISTS AuxRecord (
+          id TEXT PRIMARY KEY,
+          dni TEXT,
+          nombre TEXT,
+          fecha TEXT,
+          hora TEXT,
+          tipo TEXT,
+          detalle TEXT,
+          createdAt TEXT
+        )`,
+        args: [],
+      });
+    } catch { /* non-critical */ }
 
-    const [accesosResult, auxResult] = await Promise.all([
-      db.execute({ sql: 'SELECT * FROM AccessRecord ORDER BY fecha ASC, nombre ASC, hora ASC', args: [] }),
-      db.execute({ sql: 'SELECT * FROM AuxRecord ORDER BY fecha ASC, nombre ASC, hora ASC', args: [] }),
-    ]);
-
+    // Fetch accesos, and try aux records (graceful fallback if table doesn't exist)
+    const accesosResult = await db.execute({ sql: 'SELECT * FROM AccessRecord ORDER BY fecha ASC, nombre ASC, hora ASC', args: [] });
     const accesos = accesosResult.rows as Record<string, unknown>[];
-    const auxRecords = auxResult.rows as Record<string, unknown>[];
+
+    let auxRecords: Record<string, unknown>[] = [];
+    try {
+      const auxResult = await db.execute({ sql: 'SELECT * FROM AuxRecord ORDER BY fecha ASC, nombre ASC, hora ASC', args: [] });
+      auxRecords = auxResult.rows as Record<string, unknown>[];
+    } catch {
+      // AuxRecord table doesn't exist yet - continue without it
+      auxRecords = [];
+    }
 
     if (accesos.length === 0) {
       return NextResponse.json({

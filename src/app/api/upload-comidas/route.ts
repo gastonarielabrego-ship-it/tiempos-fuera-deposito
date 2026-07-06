@@ -14,9 +14,13 @@ export async function POST(request: NextRequest) {
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
 
     // Ensure AuxRecord table exists
-    await db.execute({ sql: `CREATE TABLE IF NOT EXISTS AuxRecord (
-      id TEXT PRIMARY KEY, dni TEXT, nombre TEXT, fecha TEXT, hora TEXT, tipo TEXT, detalle TEXT, createdAt TEXT
-    )`, args: [] }).catch(() => {});
+    try {
+      await db.execute({ sql: `CREATE TABLE IF NOT EXISTS AuxRecord (
+        id TEXT PRIMARY KEY, dni TEXT, nombre TEXT, fecha TEXT, hora TEXT, tipo TEXT, detalle TEXT, createdAt TEXT
+      )`, args: [] });
+    } catch (e) {
+      return NextResponse.json({ error: 'No se pudo crear la tabla AuxRecord. Ejecuta /api/setup primero.', detail: String(e) }, { status: 500 });
+    }
 
     await db.execute({ sql: "DELETE FROM AuxRecord WHERE tipo = 'COMIDA'", args: [] });
 
