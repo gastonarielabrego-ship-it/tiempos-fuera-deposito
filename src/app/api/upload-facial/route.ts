@@ -30,9 +30,9 @@ export async function POST(request: NextRequest) {
 
     const values: unknown[][] = [];
     for (const row of rows) {
-      const persona = String(getRowValue(row, 'Persona') || '');
       const dni = String(getRowValue(row, 'DNI') || '');
-      if (!persona) continue;
+      if (!dni) continue;
+      const persona = String(getRowValue(row, 'Persona') || '');
       const fecha = parseExcelDate(getRowValue(row, 'Fecha'));
       const hora = parseExcelTime(getRowValue(row, 'Hora', 'hora', 'horario'));
       const zona = String(getRowValue(row, 'Zona') || '');
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
             totalRows: rows.length,
             columns: firstRow,
             sampleRow,
-            hint: 'Verificá que las columnas se llamen: Persona, DNI, Fecha, Hora, Zona'
+            hint: 'Verificá que las columnas contengan: DNI (obligatorio), Fecha, Hora/horario, Zona'
           }
         } : {})
       });
@@ -70,7 +70,18 @@ function parseExcelDate(raw: unknown): string {
     if (d) return `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`;
   }
   if (raw instanceof Date) return raw.toISOString().split('T')[0];
-  if (typeof raw === 'string' && raw.includes('-')) return raw.split('T')[0];
+  if (typeof raw === 'string') {
+    const s = raw.trim().split('T')[0].split(' ')[0];
+    if (s.includes('-')) return s;
+    if (s.includes('/')) {
+      const parts = s.split('/');
+      if (parts.length === 3) {
+        const [a, b, c] = parts.map(Number);
+        if (c > 100) return `${c}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`; // dd/mm/yyyy
+        if (a > 100) return `${a}-${String(b).padStart(2, '0')}-${String(c).padStart(2, '0')}`; // yyyy/mm/dd
+      }
+    }
+  }
   return '';
 }
 
