@@ -84,7 +84,15 @@ const turnoMeta: Record<string, { label: string; icon: typeof Sun; bg: string; t
 const DEFAULT_TURNO_META = { label: '—', icon: Clock, bg: 'bg-gray-50', text: 'text-gray-400', border: 'border-gray-200' };
 
 const EMPRESAS_EXCLUIDAS = ['GESTION EE-EXTERNO', 'GESTION EE-EXTERNO(SELECCION)', 'G.L.D. GREMIAL EE'];
-const isEmpresaExcluida = (empresa: string) => EMPRESAS_EXCLUIDAS.some(ex => empresa.toUpperCase().includes(ex.toUpperCase()));
+// Keywords for flexible matching - if empresa contains ANY of these, it gets excluded
+const EMPRESAS_KEYWORDS = ['GREMIAL', 'EE-EXTERNO'];
+const isEmpresaExcluida = (empresa: string) => {
+  const upper = empresa.toUpperCase().trim();
+  // Direct match first
+  if (EMPRESAS_EXCLUIDAS.some(ex => upper.includes(ex.toUpperCase()))) return true;
+  // Keyword fallback
+  return EMPRESAS_KEYWORDS.some(kw => upper.includes(kw));
+};
 
 /* ═══════════════════════════════════════
    TOAST NOTIFICATION
