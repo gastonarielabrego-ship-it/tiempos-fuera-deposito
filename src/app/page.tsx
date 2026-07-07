@@ -386,6 +386,7 @@ export default function Home() {
         desayuno: 'EXCESO DE DESAYUNO',
         'break-tarde': 'EXCESO BREAK TARDE',
         'break-noche': 'EXCESO BREAK NOCHE',
+        'multiple-salidas': 'MAYOR CANTIDAD DE SALIDAS',
       };
       const r = await window.fetch('/api/sanciones', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -839,6 +840,7 @@ export default function Home() {
                           <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Prom/Dia</th>
                           <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Dias</th>
                           <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Mayor Dia</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center w-20">Accion</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -877,6 +879,12 @@ export default function Home() {
                               <td className="px-3 py-3 text-right"><span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span></td>
                               <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
                               <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
+                              <td className="px-3 py-3 text-center" onClick={e => e.stopPropagation()}>
+                                <button onClick={() => generateSancion(emp.codigoEmp, emp.maxDiaFecha || '', '', '', emp.totalFuera, emp.totalFueraSegundos, 'multiple-salidas')}
+                                  className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors">
+                                  <AlertTriangle className="h-3 w-3" /> Sancionar
+                                </button>
+                              </td>
                             </tr>
                           );
                         })}
