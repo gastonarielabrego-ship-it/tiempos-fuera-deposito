@@ -9,7 +9,7 @@ import {
   Upload, RefreshCw, Clock, Users,
   FileSpreadsheet, Search, Sun, Sunset, Moon,
   AlertTriangle, CheckCircle2, XCircle, Coffee,
-  FileText, Printer, Trash2,
+  FileText, Printer, Trash2, Copy,
 } from 'lucide-react';
 
 /* ═══════════════════════════════════════
@@ -122,7 +122,7 @@ export default function Home() {
   const [uploading, setUploading] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filterTurno, setFilterTurno] = useState('all');
-  const [activeTab, setActiveTab] = useState<'ranking' | 'desayuno' | 'break-tarde' | 'break-noche' | 'sanciones'>('ranking');
+  const [activeTab, setActiveTab] = useState<'ranking' | 'doble-entrada' | 'desayuno' | 'break-tarde' | 'break-noche' | 'sanciones'>('ranking');
   const [showUpload, setShowUpload] = useState(false);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -132,6 +132,33 @@ export default function Home() {
   const [sanciones, setSanciones] = useState<Sancion[]>([]);
   const [sancionStats, setSancionStats] = useState<SancionStat[]>([]);
   const [rankingSubTab, setRankingSubTab] = useState<'tiempo' | 'salidas'>('tiempo');
+
+  // ── Doble Entrada: consecutive Entrada Depo without Salida in between ──
+  const dobleEntrada = useMemo(() => {
+    if (!data) return [] as { codigoEmp: number; nombre: string; empresa: string; fecha: string; hora1: string; hora2: string; turno: string }[];
+    const results: { codigoEmp: number; nombre: string; empresa: string; fecha: string; hora1: string; hora2: string; turno: string }[] = [];
+    for (const emp of filteredEmployees) {
+      if (isEmpresaExcluida(emp.empresa)) continue;
+      const eventos = emp.accesosEventos;
+      for (let i = 0; i < eventos.length - 1; i++) {
+        const curr = eventos[i];
+        const next = eventos[i + 1];
+        if (curr.terminal === 'Entrada Depo' && next.terminal === 'Entrada Depo') {
+          results.push({
+            codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa,
+            fecha: emp.fecha, hora1: curr.hora, hora2: next.hora, turno: emp.turno,
+          });
+        }
+      }
+    }
+    return results;
+  }, [data, filteredEmployees]);
+
+  const dobleEntradaFiltered = useMemo(() => {
+    if (!search) return dobleEntrada;
+    const s = search.toLowerCase();
+    return dobleEntrada.filter(e => e.nombre.toLowerCase().includes(s) || String(e.codigoEmp).includes(s));
+  }, [dobleEntrada, search]);
 
   const showToast = useCallback((message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -673,6 +700,10 @@ export default function Home() {
                 className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'ranking' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
                 Ranking General
               </button>
+              <button onClick={() => setActiveTab('doble-entrada')}
+                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'doble-entrada' ? 'border-teal-500 text-teal-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                <Copy className="h-3.5 w-3.5" /> Doble Entrada {dobleEntrada.length > 0 && <span className="bg-teal-500 text-white text-[10px] rounded-full w-4 h-4 inline-flex items-center justify-center">{dobleEntrada.length}</span>}
+              </button>
               <button onClick={() => setActiveTab('desayuno')}
                 className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'desayuno' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
                 <Coffee className="h-3.5 w-3.5" /> Exceso Desayuno
@@ -876,6 +907,72 @@ export default function Home() {
                           </div>
                         );
                       })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ═══════════ TAB: DOBLE ENTRADA ═══════════ */}
+            {activeTab === 'doble-entrada' && (
+              <div className="space-y-4 pt-1">
+                <div className="bg-teal-50 border border-teal-100 rounded-lg px-4 py-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Copy className="h-4 w-4 text-teal-600" />
+                    <h2 className="text-sm font-bold text-teal-800">Registros con Doble Entrada</h2>
+                  </div>
+                  <p className="text-xs text-teal-700">Detecta eventos donde un operador registra dos <b>Entrada Depo</b> consecutivas sin una <b>Salida Depo</b> en medio.</p>
+                  <p className="text-xs text-teal-600 mt-1"><b>{dobleEntradaFiltered.length}</b> casos encontrados {dobleEntradaFiltered.length !== dobleEntrada.length && `(filtrados de ${dobleEntrada.length})`}</p>
+                </div>
+
+                {dobleEntradaFiltered.length === 0 ? (
+                  <div className="text-center py-12 text-gray-400">
+                    <CheckCircle2 className="h-10 w-10 mx-auto mb-2 text-emerald-300" />
+                    <p className="text-sm">No se detectaron dobles entradas</p>
+                  </div>
+                ) : (
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-gray-50 text-left">
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-20">Turno</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-24">Fecha</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">1ra Entrada</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">2da Entrada</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {dobleEntradaFiltered.map((reg, idx) => {
+                            const pos = idx + 1;
+                            const empTurno = empTurnoMap.get(reg.codigoEmp) || reg.turno;
+                            const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
+                            const TIcon = tMeta.icon;
+                            return (
+                              <tr key={`${reg.codigoEmp}-${reg.fecha}-${reg.hora1}`} className="bg-teal-50/30 hover:bg-teal-50/60 cursor-pointer transition-colors"
+                                onClick={() => openProfile(reg.codigoEmp)}>
+                                <td className="px-3 py-2.5">
+                                  <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
+                                </td>
+                                <td className="px-3 py-2.5">
+                                  <p className="font-semibold text-gray-800 text-sm">{reg.nombre}</p>
+                                  <p className="text-[11px] text-gray-400">{reg.codigoEmp} &middot; {reg.empresa}</p>
+                                </td>
+                                <td className="px-3 py-2.5">
+                                  <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
+                                    <TIcon className="h-3 w-3" /> {empTurno}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2.5 text-sm text-gray-700">{reg.fecha}</td>
+                                <td className="px-3 py-2.5 text-right font-mono text-xs text-teal-700 font-semibold">{reg.hora1}</td>
+                                <td className="px-3 py-2.5 text-right font-mono text-xs text-red-600 font-semibold">{reg.hora2}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 )}
