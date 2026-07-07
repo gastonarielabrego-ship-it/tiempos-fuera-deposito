@@ -122,7 +122,7 @@ export default function Home() {
   const [uploading, setUploading] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filterTurno, setFilterTurno] = useState('all');
-  const [activeTab, setActiveTab] = useState<'ranking' | 'doble-entrada' | 'desayuno' | 'break-tarde' | 'break-noche' | 'sanciones'>('ranking');
+  const [activeTab, setActiveTab] = useState<'ranking' | 'doble-entrada' | 'extt' | 'desayuno' | 'break-tarde' | 'break-noche' | 'sanciones'>('ranking');
   const [showUpload, setShowUpload] = useState(false);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -372,6 +372,66 @@ export default function Home() {
     const s = search.toLowerCase();
     return dobleEntrada.filter(e => e.nombre.toLowerCase().includes(s) || String(e.codigoEmp).includes(s));
   }, [dobleEntrada, search]);
+
+  // EX-TT: employees from G.L.D. EX-TT with >20 min outside depot per day
+  const exttData = useMemo(() => {
+    if (!data) return [];
+    const source = fechaFilter ? data.employees.filter(e => e.fecha === fechaFilter) : data.employees;
+    const exttEmps = source.filter(e => {
+      const upper = e.empresa.toUpperCase();
+      return upper.includes('EX-TT');
+    });
+    // Group by employee-day, filter those with >20 min (1200 seconds)
+    const results: { codigoEmp: number; nombre: string; empresa: string; sector: string; fecha: string; jornada: string; totalFueraSegundos: number; totalFuera: string; tiemposFuera: TimeOutPair[]; salidasCount: number }[] = [];
+    for (const emp of exttEmps) {
+      if (emp.totalFueraSegundos > 1200) {
+        results.push({
+          codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector,
+          fecha: emp.fecha, jornada: emp.jornada, totalFueraSegundos: emp.totalFueraSegundos,
+          totalFuera: emp.totalFuera, tiemposFuera: emp.tiemposFuera, salidasCount: emp.tiemposFuera.length,
+        });
+      }
+    }
+    // Sort by total time descending
+    results.sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos);
+    return results;
+  }, [data, fechaFilter]);
+
+  const exttFiltered = useMemo(() => {
+    if (!search) return exttData;
+    const s = search.toLowerCase();
+    return exttData.filter(e => e.nombre.toLowerCase().includes(s) || String(e.codigoEmp).includes(s));
+  }, [exttData, search]);
+
+  const [sancionandoExtt, setSancionandoExtt] = useState(false);
+  const sancionarTodosExtt = useCallback(async () => {
+    setSancionandoExtt(true);
+    let ok = 0, fail = 0;
+    for (const emp of exttFiltered) {
+      try {
+        const eventos = emp.tiemposFuera.map(tf => ({
+          salida: tf.salida, entrada: tf.entrada,
+          duracion: tf.duracion, duracionSegundos: tf.duracionSegundos,
+          fecha: emp.fecha,
+        }));
+        const r = await window.fetch('/api/sanciones', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            codigoEmp: emp.codigoEmp, fecha: emp.fecha,
+            salida: '', entrada: '',
+            duracion: emp.totalFuera, duracionSegundos: emp.totalFueraSegundos,
+            tipo: 'multiple-salidas', tipoLabel: 'MAYOR CANTIDAD DE SALIDAS - EXTT',
+            nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector, jornada: emp.jornada,
+            eventos,
+          }),
+        });
+        if (r.ok) ok++; else fail++;
+      } catch { fail++; }
+    }
+    setSancionandoExtt(false);
+    await fetchSanciones();
+    showToast(`Sanciones registradas: ${ok} ok, ${fail} errores`, ok > 0 ? 'success' : 'error');
+  }, [exttFiltered, fetchSanciones, showToast]);
 
   const totalFueraAll = activeRanking.reduce((s, e) => s + e.totalFueraSegundos, 0) || 0;
   const maxFuera = activeRanking[0];
@@ -792,6 +852,10 @@ export default function Home() {
                 className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'doble-entrada' ? 'border-teal-500 text-teal-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
                 <Copy className="h-3.5 w-3.5" /> Doble Entrada {dobleEntrada.length > 0 && <span className="bg-teal-500 text-white text-[10px] rounded-full w-4 h-4 inline-flex items-center justify-center">{dobleEntrada.length}</span>}
               </button>
+              <button onClick={() => setActiveTab('extt')}
+                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'extt' ? 'border-amber-600 text-amber-700' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                <AlertTriangle className="h-3.5 w-3.5" /> EXTT {exttData.length > 0 && <span className="bg-amber-600 text-white text-[10px] rounded-full w-4 h-4 inline-flex items-center justify-center">{exttData.length}</span>}
+              </button>
               <button onClick={() => setActiveTab('desayuno')}
                 className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'desayuno' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
                 <Coffee className="h-3.5 w-3.5" /> Exceso Desayuno
@@ -1122,6 +1186,71 @@ export default function Home() {
               />
             )}
 
+            {activeTab === 'extt' && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-amber-800">G.L.D. EX-TT — Mas de 20 min fuera de deposito</h3>
+                    <p className="text-xs text-amber-600 mt-0.5"><b>{exttFiltered.length}</b> registros {exttFiltered.length !== exttData.length && `(filtrados de ${exttData.length})`}</p>
+                  </div>
+                  <button onClick={sancionarTodosExtt} disabled={sancionandoExtt || exttFiltered.length === 0}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-red-500 text-white rounded-md hover:bg-red-600 disabled:opacity-50 transition-colors">
+                    {sancionandoExtt ? <RefreshCw className="h-3 w-3 animate-spin" /> : <AlertTriangle className="h-3 w-3" />}
+                    Sancionar todos ({exttFiltered.length})
+                  </button>
+                </div>
+                {exttFiltered.length === 0 ? (
+                  <div className="text-center py-12 text-gray-400"><AlertTriangle className="h-8 w-8 mx-auto mb-2 opacity-40" /><p className="text-sm">No hay registros EX-TT con mas de 20 minutos fuera</p></div>
+                ) : (
+                  <div className="border border-amber-200 rounded-lg overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-amber-50 text-left">
+                            <th className="px-3 py-2.5 text-xs font-semibold text-amber-700 w-12">#</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-amber-700">Operador</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-amber-700">Fecha</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-amber-700 text-right w-16">Salidas</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-amber-700 text-right w-28">T. Fuera</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-amber-700 text-center w-20">Accion</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-amber-100">
+                          {exttFiltered.map((reg, idx) => {
+                            const pos = idx + 1;
+                            const rowBg = reg.totalFueraSegundos > 3600 ? 'bg-red-50/40' : 'bg-amber-50/30';
+                            return (
+                              <tr key={`${reg.codigoEmp}-${reg.fecha}`} className={`${rowBg} hover:bg-amber-50/60 transition-colors`}>
+                                <td className="px-3 py-2.5"><span className="text-xs text-gray-500 font-medium">{pos}</span></td>
+                                <td className="px-3 py-2.5">
+                                  <p className="font-semibold text-gray-800 text-sm">{reg.nombre}</p>
+                                  <p className="text-[11px] text-gray-400">{reg.codigoEmp} &middot; {reg.sector}</p>
+                                </td>
+                                <td className="px-3 py-2.5 text-gray-600 text-sm">{reg.fecha}</td>
+                                <td className="px-3 py-2.5 text-right">
+                                  <span className="font-mono font-bold text-amber-700">{reg.salidasCount}</span>
+                                </td>
+                                <td className="px-3 py-2.5 text-right">
+                                  <span className={`font-mono font-bold ${reg.totalFueraSegundos > 3600 ? 'text-red-600' : 'text-amber-700'}`}>{reg.totalFuera}</span>
+                                </td>
+                                <td className="px-3 py-2.5 text-center">
+                                  <button onClick={() => {
+                                    const eventos = reg.tiemposFuera.map(tf => ({ salida: tf.salida, entrada: tf.entrada, duracion: tf.duracion, duracionSegundos: tf.duracionSegundos, fecha: reg.fecha }));
+                                    generateSancion(reg.codigoEmp, reg.fecha, '', '', reg.totalFuera, reg.totalFueraSegundos, 'multiple-salidas', reg.nombre, reg.empresa, reg.sector, reg.jornada, eventos);
+                                  }} className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors">
+                                    <AlertTriangle className="h-3 w-3" /> Sancionar
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             {activeTab === 'sanciones' && (
               <SancionesTabContent
                 sanciones={sanciones}
