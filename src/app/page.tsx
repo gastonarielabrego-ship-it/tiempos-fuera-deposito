@@ -169,7 +169,11 @@ export default function Home() {
       const r = await window.fetch(ep, { method: 'POST', body: fd });
       if (r.ok) {
         const json = await r.json().catch(() => null);
-        showToast(`${label}: ${json?.count ?? 0} registros cargados`, 'success');
+        if (json?.count === 0 && json?.debug) {
+          showToast(`${label}: 0 registros. Columnas: ${json.debug.columns?.join(', ')}`, 'error');
+        } else {
+          showToast(`${label}: ${json?.count ?? 0} registros cargados`, 'success');
+        }
         await fetchData();
       } else {
         const text = await r.text().catch(() => 'Error desconocido');

@@ -13,6 +13,10 @@ export async function POST(request: NextRequest) {
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
 
+    // Debug: return first row columns if no data parsed
+    const firstRow = rows[0] ? Object.keys(rows[0]) : [];
+    const sampleRow = rows[0] || {};
+
     // Ensure AuxRecord table exists
     try {
       await db.execute({ sql: `CREATE TABLE IF NOT EXISTS AuxRecord (
@@ -33,6 +37,19 @@ export async function POST(request: NextRequest) {
       const hora = parseExcelTime(getRowValue(row, 'y', 'Hora', 'hora'));
       if (!fecha || !hora) continue;
       values.push([crypto.randomUUID(), dni, nombre, fecha, hora, 'COMIDA', 'TK Comida']);
+    }
+
+    // If 0 records, return debug info
+    if (values.length === 0) {
+      return NextResponse.json({
+        success: true, count: 0,
+        debug: {
+          totalRows: rows.length,
+          columns: firstRow,
+          sampleRow,
+          hint: 'Verificá que las columnas se llamen: Nombre, DNI, Fecha, Hora'
+        }
+      });
     }
 
     if (values.length > 0) {

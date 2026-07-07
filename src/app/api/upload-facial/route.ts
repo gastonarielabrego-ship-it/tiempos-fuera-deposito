@@ -13,6 +13,10 @@ export async function POST(request: NextRequest) {
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
 
+    // Debug info
+    const firstRow = rows[0] ? Object.keys(rows[0]) : [];
+    const sampleRow = rows[0] || {};
+
     // Ensure AuxRecord table exists
     try {
       await db.execute({ sql: `CREATE TABLE IF NOT EXISTS AuxRecord (
@@ -43,7 +47,17 @@ export async function POST(request: NextRequest) {
       })));
     }
 
-    return NextResponse.json({ success: true, count: values.length });
+    return NextResponse.json({
+        success: true, count: values.length,
+        ...(values.length === 0 ? {
+          debug: {
+            totalRows: rows.length,
+            columns: firstRow,
+            sampleRow,
+            hint: 'Verificá que las columnas se llamen: Persona, DNI, Fecha, Hora, Zona'
+          }
+        } : {})
+      });
   } catch (error) {
     console.error('Error uploading facial:', error);
     return NextResponse.json({ error: 'Error procesando archivo de facial' }, { status: 500 });
