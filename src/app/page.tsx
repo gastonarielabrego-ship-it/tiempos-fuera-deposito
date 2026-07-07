@@ -55,6 +55,14 @@ interface SancionStat {
   codigoEmp: number; nombre: string; empresa: string;
   totalSanciones: number; ultimaSancion: string;
 }
+interface ExttIndicador {
+  id: string; fecha: string;
+  totalEmpleados: number; totalRegistros: number; totalSalidas: number; totalFueraSegundos: number;
+  tmEmpleados: number; tmRegistros: number; tmSalidas: number; tmFueraSegundos: number;
+  ttEmpleados: number; ttRegistros: number; ttSalidas: number; ttFueraSegundos: number;
+  tnEmpleados: number; tnRegistros: number; tnSalidas: number; tnFueraSegundos: number;
+  sancionados: number; createdAt: string;
+}
 
 /* ═══════════════════════════════════════
    HELPERS
@@ -71,6 +79,12 @@ const formatHMS = (s: number) => {
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
   return `${h}h ${m}m ${sec}s`;
+};
+const formatHM = (s: number) => {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 };
 
 const durTextColor = (s: number) => s <= 1800 ? 'text-emerald-600' : s <= 3600 ? 'text-amber-600' : 'text-red-600';
@@ -132,9 +146,21 @@ export default function Home() {
   const [sanciones, setSanciones] = useState<Sancion[]>([]);
   const [sancionStats, setSancionStats] = useState<SancionStat[]>([]);
   const [rankingSubTab, setRankingSubTab] = useState<'tiempo' | 'salidas'>('tiempo');
+  const [exttIndicadores, setExttIndicadores] = useState<ExttIndicador[]>([]);
+  const [exttIndLoading, setExttIndLoading] = useState(false);
 
   const showToast = useCallback((message: string, type: 'success' | 'error') => {
     setToast({ message, type });
+  }, []);
+
+  const fetchExttIndicadores = useCallback(async () => {
+    try {
+      const r = await window.fetch('/api/extt-indicador');
+      if (r.ok) {
+        const json = await r.json();
+        setExttIndicadores(json);
+      }
+    } catch { /* ignore */ }
   }, []);
 
   const fetchSanciones = useCallback(async () => {
@@ -170,7 +196,7 @@ export default function Home() {
     }
   }, [fetchSanciones]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { fetchData(); fetchExttIndicadores(); }, [fetchData, fetchExttIndicadores]);
 
   const upload = async (ep: string, label: string, file: File) => {
     setUploading(ep);
@@ -381,7 +407,6 @@ export default function Home() {
       const upper = e.empresa.toUpperCase();
       return upper.includes('EX-TT');
     });
-    // Group by employee-day, filter those with >20 min (1200 seconds)
     const results: { codigoEmp: number; nombre: string; empresa: string; sector: string; fecha: string; jornada: string; totalFueraSegundos: number; totalFuera: string; tiemposFuera: TimeOutPair[]; salidasCount: number }[] = [];
     for (const emp of exttEmps) {
       if (emp.totalFueraSegundos > 1200) {
@@ -392,16 +417,77 @@ export default function Home() {
         });
       }
     }
-    // Sort by total time descending
     results.sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos);
     return results;
   }, [data, fechaFilter]);
+
+  // EXTT summary cards (current data, not filtered)
+  const exttSummary = useMemo(() => {
+    if (!data) return null;
+    const allExtt = data.employees.filter(e => e.empresa.toUpperCase().includes('EX-TT') && e.totalFueraSegundos > 1200);
+    if (allExtt.length === 0) return null;
+    const uniqueEmps = new Set(allExtt.map(e => e.codigoEmp));
+    const tm = allExtt.filter(e => e.jornada?.toUpperCase().includes('TM'));
+    const tt = allExtt.filter(e => e.jornada?.toUpperCase().includes('TT'));
+    const tn = allExtt.filter(e => e.jornada?.toUpperCase().includes('TN'));
+    return {
+      totalEmpleados: uniqueEmps.size,
+      totalRegistros: allExtt.length,
+      totalSalidas: allExtt.reduce((s, e) => s + e.tiemposFuera.length, 0),
+      totalFueraSegundos: allExtt.reduce((s, e) => s + e.totalFueraSegundos, 0),
+      tm: { empleados: new Set(tm.map(e => e.codigoEmp)).size, registros: tm.length, salidas: tm.reduce((s, e) => s + e.tiemposFuera.length, 0), fueraSegundos: tm.reduce((s, e) => s + e.totalFueraSegundos, 0) },
+      tt: { empleados: new Set(tt.map(e => e.codigoEmp)).size, registros: tt.length, salidas: tt.reduce((s, e) => s + e.tiemposFuera.length, 0), fueraSegundos: tt.reduce((s, e) => s + e.totalFueraSegundos, 0) },
+      tn: { empleados: new Set(tn.map(e => e.codigoEmp)).size, registros: tn.length, salidas: tn.reduce((s, e) => s + e.tiemposFuera.length, 0), fueraSegundos: tn.reduce((s, e) => s + e.totalFueraSegundos, 0) },
+    };
+  }, [data]);
 
   const exttFiltered = useMemo(() => {
     if (!search) return exttData;
     const s = search.toLowerCase();
     return exttData.filter(e => e.nombre.toLowerCase().includes(s) || String(e.codigoEmp).includes(s));
   }, [exttData, search]);
+
+  const saveExttSnapshot = useCallback(async () => {
+    if (!data || exttData.length === 0) return;
+    const dates = [...new Set(exttData.map(e => e.fecha))].sort();
+    for (const fecha of dates) {
+      const dayData = exttData.filter(e => e.fecha === fecha);
+      const uniqueEmps = new Set(dayData.map(e => e.codigoEmp));
+      const tm = dayData.filter(e => e.jornada?.toUpperCase().includes('TM'));
+      const tt = dayData.filter(e => e.jornada?.toUpperCase().includes('TT'));
+      const tn = dayData.filter(e => e.jornada?.toUpperCase().includes('TN'));
+      try {
+        await window.fetch('/api/extt-indicador', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fecha,
+            totalEmpleados: uniqueEmps.size,
+            totalRegistros: dayData.length,
+            totalSalidas: dayData.reduce((s, e) => s + e.salidasCount, 0),
+            totalFueraSegundos: dayData.reduce((s, e) => s + e.totalFueraSegundos, 0),
+            tmEmpleados: new Set(tm.map(e => e.codigoEmp)).size,
+            tmRegistros: tm.length, tmSalidas: tm.reduce((s, e) => s + e.salidasCount, 0),
+            tmFueraSegundos: tm.reduce((s, e) => s + e.totalFueraSegundos, 0),
+            ttEmpleados: new Set(tt.map(e => e.codigoEmp)).size,
+            ttRegistros: tt.length, ttSalidas: tt.reduce((s, e) => s + e.salidasCount, 0),
+            ttFueraSegundos: tt.reduce((s, e) => s + e.totalFueraSegundos, 0),
+            tnEmpleados: new Set(tn.map(e => e.codigoEmp)).size,
+            tnRegistros: tn.length, tnSalidas: tn.reduce((s, e) => s + e.salidasCount, 0),
+            tnFueraSegundos: tn.reduce((s, e) => s + e.totalFueraSegundos, 0),
+            sancionados: 0,
+          }),
+        });
+      } catch { /* ignore */ }
+    }
+    await fetchExttIndicadores();
+  }, [data, exttData, fetchExttIndicadores]);
+
+  // Auto-save EXTT snapshot when data loads
+  useEffect(() => {
+    if (exttData.length > 0) {
+      saveExttSnapshot();
+    }
+  }, [exttData, saveExttSnapshot]);
 
   const [sancionandoExtt, setSancionandoExtt] = useState(false);
   const sancionarTodosExtt = useCallback(async () => {
@@ -1187,7 +1273,37 @@ export default function Home() {
             )}
 
             {activeTab === 'extt' && (
-              <div className="space-y-3">
+              <div className="space-y-4">
+                {/* ── Summary cards by turno ── */}
+                {exttSummary && (
+                  <div className="grid grid-cols-3 gap-3">
+                    {([
+                      { key: 'tm', label: 'TM Mañana', icon: Sun, color: 'amber' },
+                      { key: 'tt', label: 'TT Tarde', icon: Sunset, color: 'orange' },
+                      { key: 'tn', label: 'TN Noche', icon: Moon, color: 'blue' },
+                    ] as const).map(({ key, label, icon: Icon, color }) => {
+                      const t = exttSummary[key];
+                      const colorMap: Record<string, { card: string; num: string; sub: string }> = {
+                        amber: { card: 'bg-amber-50 border-amber-200', num: 'text-amber-700', sub: 'text-amber-500' },
+                        orange: { card: 'bg-orange-50 border-orange-200', num: 'text-orange-700', sub: 'text-orange-500' },
+                        blue: { card: 'bg-blue-50 border-blue-200', num: 'text-blue-700', sub: 'text-blue-500' },
+                      };
+                      const c = colorMap[color];
+                      return (
+                        <div key={key} className={`rounded-lg border p-3 ${c.card}`}>
+                          <div className="flex items-center gap-1.5 mb-2">
+                            <Icon className="h-3.5 w-3.5 text-gray-400" />
+                            <span className="text-[11px] text-gray-500 font-medium">{label}</span>
+                          </div>
+                          <p className={`text-xl font-bold font-mono ${c.num}`}>{formatHM(t.fueraSegundos)}</p>
+                          <p className={`text-[11px] mt-1 ${c.sub}`}>{t.salidas} salidas &middot; {t.empleados} operadores</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* ── Current day detail table ── */}
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
                     <h3 className="text-sm font-bold text-amber-800">G.L.D. EX-TT — Mas de 20 min fuera de deposito</h3>
@@ -1249,6 +1365,66 @@ export default function Home() {
                     </div>
                   </div>
                 )}
+
+                {/* ── Historical indicator table ── */}
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="bg-gray-50 px-4 py-2.5 border-b border-gray-200 flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-gray-600">Indicador Historico por Dia</h4>
+                    <span className="text-[10px] text-gray-400">{exttIndicadores.length} dias registrados</span>
+                  </div>
+                  {exttIndicadores.length === 0 ? (
+                    <div className="text-center py-6 text-gray-300 text-xs">Sin datos historicos aun. Los indicadores se guardan automaticamente al cargar datos.</div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-gray-50 text-left">
+                            <th className="px-3 py-2 font-semibold text-gray-500">Fecha</th>
+                            <th className="px-3 py-2 font-semibold text-gray-500 text-right">Operadores</th>
+                            <th className="px-3 py-2 font-semibold text-gray-500 text-right">Registros</th>
+                            <th className="px-3 py-2 font-semibold text-gray-500 text-right">Salidas</th>
+                            <th className="px-3 py-2 font-semibold text-gray-500 text-right">T. Total</th>
+                            <th className="px-3 py-2 font-semibold text-amber-600 text-right">TM Oper.</th>
+                            <th className="px-3 py-2 font-semibold text-amber-600 text-right">TM Sal.</th>
+                            <th className="px-3 py-2 font-semibold text-amber-600 text-right">TM Tiempo</th>
+                            <th className="px-3 py-2 font-semibold text-orange-600 text-right">TT Oper.</th>
+                            <th className="px-3 py-2 font-semibold text-orange-600 text-right">TT Sal.</th>
+                            <th className="px-3 py-2 font-semibold text-orange-600 text-right">TT Tiempo</th>
+                            <th className="px-3 py-2 font-semibold text-blue-600 text-right">TN Oper.</th>
+                            <th className="px-3 py-2 font-semibold text-blue-600 text-right">TN Sal.</th>
+                            <th className="px-3 py-2 font-semibold text-blue-600 text-right">TN Tiempo</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {exttIndicadores.map((ind, idx) => {
+                            const prev = idx < exttIndicadores.length - 1 ? exttIndicadores[idx + 1] : null;
+                            const empDiff = prev ? ind.totalEmpleados - prev.totalEmpleados : 0;
+                            const empTrend = empDiff > 0 ? 'text-red-600' : empDiff < 0 ? 'text-emerald-600' : 'text-gray-400';
+                            const empArrow = empDiff > 0 ? '+' : '';
+                            return (
+                              <tr key={ind.id} className="hover:bg-gray-50">
+                                <td className="px-3 py-2 font-medium text-gray-700">{ind.fecha}</td>
+                                <td className={`px-3 py-2 text-right font-mono font-bold ${empTrend}`}>{ind.totalEmpleados} {empDiff !== 0 && <span className="text-[9px]">({empArrow}{empDiff})</span>}</td>
+                                <td className="px-3 py-2 text-right font-mono text-gray-600">{ind.totalRegistros}</td>
+                                <td className="px-3 py-2 text-right font-mono text-gray-600">{ind.totalSalidas}</td>
+                                <td className="px-3 py-2 text-right font-mono font-bold text-gray-800">{formatHM(ind.totalFueraSegundos)}</td>
+                                <td className="px-3 py-2 text-right font-mono text-amber-700">{ind.tmEmpleados}</td>
+                                <td className="px-3 py-2 text-right font-mono text-amber-600">{ind.tmSalidas}</td>
+                                <td className="px-3 py-2 text-right font-mono text-amber-800 font-bold">{formatHM(ind.tmFueraSegundos)}</td>
+                                <td className="px-3 py-2 text-right font-mono text-orange-700">{ind.ttEmpleados}</td>
+                                <td className="px-3 py-2 text-right font-mono text-orange-600">{ind.ttSalidas}</td>
+                                <td className="px-3 py-2 text-right font-mono text-orange-800 font-bold">{formatHM(ind.ttFueraSegundos)}</td>
+                                <td className="px-3 py-2 text-right font-mono text-blue-700">{ind.tnEmpleados}</td>
+                                <td className="px-3 py-2 text-right font-mono text-blue-600">{ind.tnSalidas}</td>
+                                <td className="px-3 py-2 text-right font-mono text-blue-800 font-bold">{formatHM(ind.tnFueraSegundos)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             {activeTab === 'sanciones' && (
