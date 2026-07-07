@@ -55,12 +55,13 @@ interface SancionStat {
   codigoEmp: number; nombre: string; empresa: string;
   totalSanciones: number; ultimaSancion: string;
 }
-interface ExttIndicador {
+interface IndicadorDiario {
   id: string; fecha: string;
-  totalEmpleados: number; totalRegistros: number; totalSalidas: number; totalFueraSegundos: number;
-  tmEmpleados: number; tmRegistros: number; tmSalidas: number; tmFueraSegundos: number;
-  ttEmpleados: number; ttRegistros: number; ttSalidas: number; ttFueraSegundos: number;
-  tnEmpleados: number; tnRegistros: number; tnSalidas: number; tnFueraSegundos: number;
+  totalOperadores: number; totalConIncidencia: number; totalRegistros: number;
+  totalSalidas: number; totalFueraSegundos: number; promedioFueraSegundos: number;
+  tmOperadores: number; tmConIncidencia: number; tmSalidas: number; tmFueraSegundos: number;
+  ttOperadores: number; ttConIncidencia: number; ttSalidas: number; ttFueraSegundos: number;
+  tnOperadores: number; tnConIncidencia: number; tnSalidas: number; tnFueraSegundos: number;
   sancionados: number; createdAt: string;
 }
 
@@ -136,7 +137,7 @@ export default function Home() {
   const [uploading, setUploading] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filterTurno, setFilterTurno] = useState('all');
-  const [activeTab, setActiveTab] = useState<'ranking' | 'doble-entrada' | 'extt' | 'desayuno' | 'break-tarde' | 'break-noche' | 'sanciones'>('ranking');
+  const [activeTab, setActiveTab] = useState<'ranking' | 'doble-entrada' | 'extt' | 'indicador' | 'desayuno' | 'break-tarde' | 'break-noche' | 'sanciones'>('ranking');
   const [showUpload, setShowUpload] = useState(false);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -146,20 +147,16 @@ export default function Home() {
   const [sanciones, setSanciones] = useState<Sancion[]>([]);
   const [sancionStats, setSancionStats] = useState<SancionStat[]>([]);
   const [rankingSubTab, setRankingSubTab] = useState<'tiempo' | 'salidas'>('tiempo');
-  const [exttIndicadores, setExttIndicadores] = useState<ExttIndicador[]>([]);
-  const [exttIndLoading, setExttIndLoading] = useState(false);
+  const [indicadores, setIndicadores] = useState<IndicadorDiario[]>([]);
 
   const showToast = useCallback((message: string, type: 'success' | 'error') => {
     setToast({ message, type });
   }, []);
 
-  const fetchExttIndicadores = useCallback(async () => {
+  const fetchIndicadores = useCallback(async () => {
     try {
-      const r = await window.fetch('/api/extt-indicador');
-      if (r.ok) {
-        const json = await r.json();
-        setExttIndicadores(json);
-      }
+      const r = await window.fetch('/api/indicador');
+      if (r.ok) setIndicadores(await r.json());
     } catch { /* ignore */ }
   }, []);
 
@@ -196,7 +193,7 @@ export default function Home() {
     }
   }, [fetchSanciones]);
 
-  useEffect(() => { fetchData(); fetchExttIndicadores(); }, [fetchData, fetchExttIndicadores]);
+  useEffect(() => { fetchData(); fetchIndicadores(); }, [fetchData, fetchIndicadores]);
 
   const upload = async (ep: string, label: string, file: File) => {
     setUploading(ep);
@@ -447,47 +444,45 @@ export default function Home() {
     return exttData.filter(e => e.nombre.toLowerCase().includes(s) || String(e.codigoEmp).includes(s));
   }, [exttData, search]);
 
-  const saveExttSnapshot = useCallback(async () => {
-    if (!data || exttData.length === 0) return;
-    const dates = [...new Set(exttData.map(e => e.fecha))].sort();
+  const saveIndicadorSnapshot = useCallback(async () => {
+    if (!data || filteredEmployees.length === 0) return;
+    const dates = [...new Set(filteredEmployees.map(e => e.fecha))].sort();
     for (const fecha of dates) {
-      const dayData = exttData.filter(e => e.fecha === fecha);
-      const uniqueEmps = new Set(dayData.map(e => e.codigoEmp));
-      const tm = dayData.filter(e => e.jornada?.toUpperCase().includes('TM'));
-      const tt = dayData.filter(e => e.jornada?.toUpperCase().includes('TT'));
-      const tn = dayData.filter(e => e.jornada?.toUpperCase().includes('TN'));
+      const dayAll = filteredEmployees.filter(e => e.fecha === fecha);
+      const dayInc = dayAll.filter(e => e.totalFueraSegundos > 0);
+      const uniqueOps = new Set(dayAll.map(e => e.codigoEmp));
+      const uniqueInc = new Set(dayInc.map(e => e.codigoEmp));
+      const tm = dayInc.filter(e => e.turno === 'TM');
+      const tt = dayInc.filter(e => e.turno === 'TT');
+      const tn = dayInc.filter(e => e.turno === 'TN');
+      const totalFuera = dayInc.reduce((s, e) => s + e.totalFueraSegundos, 0);
+      const avg = uniqueInc.size > 0 ? Math.round(totalFuera / uniqueInc.size) : 0;
       try {
-        await window.fetch('/api/extt-indicador', {
+        await window.fetch('/api/indicador', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             fecha,
-            totalEmpleados: uniqueEmps.size,
-            totalRegistros: dayData.length,
-            totalSalidas: dayData.reduce((s, e) => s + e.salidasCount, 0),
-            totalFueraSegundos: dayData.reduce((s, e) => s + e.totalFueraSegundos, 0),
-            tmEmpleados: new Set(tm.map(e => e.codigoEmp)).size,
-            tmRegistros: tm.length, tmSalidas: tm.reduce((s, e) => s + e.salidasCount, 0),
-            tmFueraSegundos: tm.reduce((s, e) => s + e.totalFueraSegundos, 0),
-            ttEmpleados: new Set(tt.map(e => e.codigoEmp)).size,
-            ttRegistros: tt.length, ttSalidas: tt.reduce((s, e) => s + e.salidasCount, 0),
-            ttFueraSegundos: tt.reduce((s, e) => s + e.totalFueraSegundos, 0),
-            tnEmpleados: new Set(tn.map(e => e.codigoEmp)).size,
-            tnRegistros: tn.length, tnSalidas: tn.reduce((s, e) => s + e.salidasCount, 0),
-            tnFueraSegundos: tn.reduce((s, e) => s + e.totalFueraSegundos, 0),
+            totalOperadores: uniqueOps.size, totalConIncidencia: uniqueInc.size,
+            totalRegistros: dayInc.length, totalSalidas: dayInc.reduce((s, e) => s + e.tiemposFuera.length, 0),
+            totalFueraSegundos: totalFuera, promedioFueraSegundos: avg,
+            tmOperadores: new Set(tm.map(e => e.codigoEmp)).size, tmConIncidencia: tm.length,
+            tmSalidas: tm.reduce((s, e) => s + e.tiemposFuera.length, 0), tmFueraSegundos: tm.reduce((s, e) => s + e.totalFueraSegundos, 0),
+            ttOperadores: new Set(tt.map(e => e.codigoEmp)).size, ttConIncidencia: tt.length,
+            ttSalidas: tt.reduce((s, e) => s + e.tiemposFuera.length, 0), ttFueraSegundos: tt.reduce((s, e) => s + e.totalFueraSegundos, 0),
+            tnOperadores: new Set(tn.map(e => e.codigoEmp)).size, tnConIncidencia: tn.length,
+            tnSalidas: tn.reduce((s, e) => s + e.tiemposFuera.length, 0), tnFueraSegundos: tn.reduce((s, e) => s + e.totalFueraSegundos, 0),
             sancionados: 0,
           }),
         });
       } catch { /* ignore */ }
     }
-    await fetchExttIndicadores();
-  }, [data, exttData, fetchExttIndicadores]);
+    await fetchIndicadores();
+  }, [data, filteredEmployees, fetchIndicadores]);
 
-  // Auto-save EXTT snapshot when data loads
+  // Auto-save general indicator snapshot when data loads
   useEffect(() => {
-    if (exttData.length > 0) {
-      saveExttSnapshot();
-    }
-  }, [exttData, saveExttSnapshot]);
+    if (filteredEmployees.length > 0) saveIndicadorSnapshot();
+  }, [filteredEmployees, saveIndicadorSnapshot]);
 
   const [sancionandoExtt, setSancionandoExtt] = useState(false);
   const sancionarTodosExtt = useCallback(async () => {
@@ -942,6 +937,10 @@ export default function Home() {
                 className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'extt' ? 'border-amber-600 text-amber-700' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
                 <AlertTriangle className="h-3.5 w-3.5" /> EXTT {exttData.length > 0 && <span className="bg-amber-600 text-white text-[10px] rounded-full w-4 h-4 inline-flex items-center justify-center">{exttData.length}</span>}
               </button>
+              <button onClick={() => setActiveTab('indicador')}
+                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'indicador' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                <Users className="h-3.5 w-3.5" /> Indicador
+              </button>
               <button onClick={() => setActiveTab('desayuno')}
                 className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'desayuno' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
                 <Coffee className="h-3.5 w-3.5" /> Exceso Desayuno
@@ -1365,56 +1364,66 @@ export default function Home() {
                     </div>
                   </div>
                 )}
-
-                {/* ── Historical indicator table ── */}
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
-                  <div className="bg-gray-50 px-4 py-2.5 border-b border-gray-200 flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-gray-600">Indicador Historico por Dia</h4>
-                    <span className="text-[10px] text-gray-400">{exttIndicadores.length} dias registrados</span>
-                  </div>
-                  {exttIndicadores.length === 0 ? (
-                    <div className="text-center py-6 text-gray-300 text-xs">Sin datos historicos aun. Los indicadores se guardan automaticamente al cargar datos.</div>
-                  ) : (
+              </div>
+            )}
+            {activeTab === 'indicador' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-emerald-800">Seguimiento de Comportamiento — Indicador Diario</h3>
+                  <span className="text-[10px] text-gray-400">{indicadores.length} dias registrados</span>
+                </div>
+                {indicadores.length === 0 ? (
+                  <div className="text-center py-16 text-gray-300"><Users className="h-10 w-10 mx-auto mb-2 opacity-30" /><p className="text-sm">Sin datos historicos. Los indicadores se guardan automaticamente al cargar datos.</p></div>
+                ) : (
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
                         <thead>
-                          <tr className="bg-gray-50 text-left">
-                            <th className="px-3 py-2 font-semibold text-gray-500">Fecha</th>
-                            <th className="px-3 py-2 font-semibold text-gray-500 text-right">Operadores</th>
-                            <th className="px-3 py-2 font-semibold text-gray-500 text-right">Registros</th>
-                            <th className="px-3 py-2 font-semibold text-gray-500 text-right">Salidas</th>
-                            <th className="px-3 py-2 font-semibold text-gray-500 text-right">T. Total</th>
-                            <th className="px-3 py-2 font-semibold text-amber-600 text-right">TM Oper.</th>
+                          <tr className="bg-emerald-50 text-left">
+                            <th className="px-3 py-2 font-semibold text-emerald-800">Fecha</th>
+                            <th className="px-3 py-2 font-semibold text-emerald-800 text-right">Operadores</th>
+                            <th className="px-3 py-2 font-semibold text-emerald-800 text-right">Con Incidencia</th>
+                            <th className="px-3 py-2 font-semibold text-emerald-800 text-right">% Incidencia</th>
+                            <th className="px-3 py-2 font-semibold text-emerald-800 text-right">Salidas</th>
+                            <th className="px-3 py-2 font-semibold text-emerald-800 text-right">T. Total</th>
+                            <th className="px-3 py-2 font-semibold text-emerald-800 text-right">Prom/Oper</th>
+                            <th className="px-3 py-2 font-semibold text-amber-600 text-right">TM Inc.</th>
                             <th className="px-3 py-2 font-semibold text-amber-600 text-right">TM Sal.</th>
                             <th className="px-3 py-2 font-semibold text-amber-600 text-right">TM Tiempo</th>
-                            <th className="px-3 py-2 font-semibold text-orange-600 text-right">TT Oper.</th>
+                            <th className="px-3 py-2 font-semibold text-orange-600 text-right">TT Inc.</th>
                             <th className="px-3 py-2 font-semibold text-orange-600 text-right">TT Sal.</th>
                             <th className="px-3 py-2 font-semibold text-orange-600 text-right">TT Tiempo</th>
-                            <th className="px-3 py-2 font-semibold text-blue-600 text-right">TN Oper.</th>
+                            <th className="px-3 py-2 font-semibold text-blue-600 text-right">TN Inc.</th>
                             <th className="px-3 py-2 font-semibold text-blue-600 text-right">TN Sal.</th>
                             <th className="px-3 py-2 font-semibold text-blue-600 text-right">TN Tiempo</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                          {exttIndicadores.map((ind, idx) => {
-                            const prev = idx < exttIndicadores.length - 1 ? exttIndicadores[idx + 1] : null;
-                            const empDiff = prev ? ind.totalEmpleados - prev.totalEmpleados : 0;
-                            const empTrend = empDiff > 0 ? 'text-red-600' : empDiff < 0 ? 'text-emerald-600' : 'text-gray-400';
-                            const empArrow = empDiff > 0 ? '+' : '';
+                          {indicadores.map((ind, idx) => {
+                            const prev = idx < indicadores.length - 1 ? indicadores[idx + 1] : null;
+                            const incDiff = prev ? ind.totalConIncidencia - prev.totalConIncidencia : 0;
+                            const incTrend = incDiff > 0 ? 'text-red-600' : incDiff < 0 ? 'text-emerald-600' : 'text-gray-400';
+                            const incArrow = incDiff > 0 ? '+' : '';
+                            const pct = ind.totalOperadores > 0 ? ((ind.totalConIncidencia / ind.totalOperadores) * 100).toFixed(1) : '0.0';
+                            const prevPct = prev && prev.totalOperadores > 0 ? ((prev.totalConIncidencia / prev.totalOperadores) * 100) : null;
+                            const pctDiff = prevPct !== null ? (parseFloat(pct) - prevPct).toFixed(1) : null;
+                            const pctTrend = pctDiff !== null ? (parseFloat(pctDiff) > 0 ? 'text-red-500' : parseFloat(pctDiff) < 0 ? 'text-emerald-500' : 'text-gray-400') : 'text-gray-400';
                             return (
-                              <tr key={ind.id} className="hover:bg-gray-50">
+                              <tr key={ind.id} className="hover:bg-emerald-50/30">
                                 <td className="px-3 py-2 font-medium text-gray-700">{ind.fecha}</td>
-                                <td className={`px-3 py-2 text-right font-mono font-bold ${empTrend}`}>{ind.totalEmpleados} {empDiff !== 0 && <span className="text-[9px]">({empArrow}{empDiff})</span>}</td>
-                                <td className="px-3 py-2 text-right font-mono text-gray-600">{ind.totalRegistros}</td>
+                                <td className="px-3 py-2 text-right font-mono text-gray-600">{ind.totalOperadores}</td>
+                                <td className={`px-3 py-2 text-right font-mono font-bold ${incTrend}`}>{ind.totalConIncidencia} {incDiff !== 0 && <span className="text-[9px]">({incArrow}{incDiff})</span>}</td>
+                                <td className={`px-3 py-2 text-right font-mono font-bold ${pctTrend}`}>{pct}% {pctDiff !== null && pctDiff !== '0.0' && <span className="text-[9px]">({parseFloat(pctDiff) > 0 ? '+' : ''}{pctDiff})</span>}</td>
                                 <td className="px-3 py-2 text-right font-mono text-gray-600">{ind.totalSalidas}</td>
                                 <td className="px-3 py-2 text-right font-mono font-bold text-gray-800">{formatHM(ind.totalFueraSegundos)}</td>
-                                <td className="px-3 py-2 text-right font-mono text-amber-700">{ind.tmEmpleados}</td>
+                                <td className="px-3 py-2 text-right font-mono text-gray-600">{formatHM(ind.promedioFueraSegundos)}</td>
+                                <td className="px-3 py-2 text-right font-mono text-amber-700">{ind.tmConIncidencia}</td>
                                 <td className="px-3 py-2 text-right font-mono text-amber-600">{ind.tmSalidas}</td>
                                 <td className="px-3 py-2 text-right font-mono text-amber-800 font-bold">{formatHM(ind.tmFueraSegundos)}</td>
-                                <td className="px-3 py-2 text-right font-mono text-orange-700">{ind.ttEmpleados}</td>
+                                <td className="px-3 py-2 text-right font-mono text-orange-700">{ind.ttConIncidencia}</td>
                                 <td className="px-3 py-2 text-right font-mono text-orange-600">{ind.ttSalidas}</td>
                                 <td className="px-3 py-2 text-right font-mono text-orange-800 font-bold">{formatHM(ind.ttFueraSegundos)}</td>
-                                <td className="px-3 py-2 text-right font-mono text-blue-700">{ind.tnEmpleados}</td>
+                                <td className="px-3 py-2 text-right font-mono text-blue-700">{ind.tnConIncidencia}</td>
                                 <td className="px-3 py-2 text-right font-mono text-blue-600">{ind.tnSalidas}</td>
                                 <td className="px-3 py-2 text-right font-mono text-blue-800 font-bold">{formatHM(ind.tnFueraSegundos)}</td>
                               </tr>
@@ -1423,8 +1432,8 @@ export default function Home() {
                         </tbody>
                       </table>
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             )}
             {activeTab === 'sanciones' && (
