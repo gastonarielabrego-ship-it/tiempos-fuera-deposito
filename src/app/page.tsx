@@ -133,33 +133,6 @@ export default function Home() {
   const [sancionStats, setSancionStats] = useState<SancionStat[]>([]);
   const [rankingSubTab, setRankingSubTab] = useState<'tiempo' | 'salidas'>('tiempo');
 
-  // ── Doble Entrada: consecutive Entrada Depo without Salida in between ──
-  const dobleEntrada = useMemo(() => {
-    if (!data) return [] as { codigoEmp: number; nombre: string; empresa: string; fecha: string; hora1: string; hora2: string; turno: string }[];
-    const results: { codigoEmp: number; nombre: string; empresa: string; fecha: string; hora1: string; hora2: string; turno: string }[] = [];
-    for (const emp of filteredEmployees) {
-      if (isEmpresaExcluida(emp.empresa)) continue;
-      const eventos = emp.accesosEventos;
-      for (let i = 0; i < eventos.length - 1; i++) {
-        const curr = eventos[i];
-        const next = eventos[i + 1];
-        if (curr.terminal === 'Entrada Depo' && next.terminal === 'Entrada Depo') {
-          results.push({
-            codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa,
-            fecha: emp.fecha, hora1: curr.hora, hora2: next.hora, turno: emp.turno,
-          });
-        }
-      }
-    }
-    return results;
-  }, [data, filteredEmployees]);
-
-  const dobleEntradaFiltered = useMemo(() => {
-    if (!search) return dobleEntrada;
-    const s = search.toLowerCase();
-    return dobleEntrada.filter(e => e.nombre.toLowerCase().includes(s) || String(e.codigoEmp).includes(s));
-  }, [dobleEntrada, search]);
-
   const showToast = useCallback((message: string, type: 'success' | 'error') => {
     setToast({ message, type });
   }, []);
@@ -372,6 +345,33 @@ export default function Home() {
     if (!data) return [];
     return activeTurnoCards.filter(tr => tr.empleados.length > 0);
   }, [data, activeTurnoCards]);
+
+  // ── Doble Entrada: consecutive Entrada Depo without Salida in between ──
+  const dobleEntrada = useMemo(() => {
+    if (!data) return [] as { codigoEmp: number; nombre: string; empresa: string; fecha: string; hora1: string; hora2: string; turno: string }[];
+    const results: { codigoEmp: number; nombre: string; empresa: string; fecha: string; hora1: string; hora2: string; turno: string }[] = [];
+    for (const emp of filteredEmployees) {
+      if (isEmpresaExcluida(emp.empresa)) continue;
+      const eventos = emp.accesosEventos;
+      for (let i = 0; i < eventos.length - 1; i++) {
+        const curr = eventos[i];
+        const next = eventos[i + 1];
+        if (curr.terminal === 'Entrada Depo' && next.terminal === 'Entrada Depo') {
+          results.push({
+            codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa,
+            fecha: emp.fecha, hora1: curr.hora, hora2: next.hora, turno: emp.turno,
+          });
+        }
+      }
+    }
+    return results;
+  }, [data, filteredEmployees]);
+
+  const dobleEntradaFiltered = useMemo(() => {
+    if (!search) return dobleEntrada;
+    const s = search.toLowerCase();
+    return dobleEntrada.filter(e => e.nombre.toLowerCase().includes(s) || String(e.codigoEmp).includes(s));
+  }, [dobleEntrada, search]);
 
   const totalFueraAll = activeRanking.reduce((s, e) => s + e.totalFueraSegundos, 0) || 0;
   const maxFuera = activeRanking[0];
