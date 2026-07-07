@@ -131,6 +131,7 @@ export default function Home() {
   const [fechaFilter, setFechaFilter] = useState('');
   const [sanciones, setSanciones] = useState<Sancion[]>([]);
   const [sancionStats, setSancionStats] = useState<SancionStat[]>([]);
+  const [rankingSubTab, setRankingSubTab] = useState<'tiempo' | 'salidas'>('tiempo');
 
   const showToast = useCallback((message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -720,135 +721,139 @@ export default function Home() {
                   <span className="text-sm"><b className="text-red-600">{data.summary.totalEmployees}</b> <span className="text-gray-500">empleados</span></span>
                 </div>
 
-                {/* ── Ranking por Tiempo Fuera ── */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-sm font-bold text-gray-800">Ranking por Mayor Tiempo Fuera</h2>
-                    <span className="text-xs text-gray-400">{rankingByTime.length} operadores</span>
-                  </div>
-                  <div className="border border-gray-200 rounded-lg overflow-hidden">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="bg-gray-50 text-left">
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-20">Turno</th>
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-32">T. Fuera Deposito</th>
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Prom/Dia</th>
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Dias</th>
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Mayor Dia</th>
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-16">Eventos</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                          {rankingByTime.map((emp, idx) => {
-                            const pos = idx + 1;
-                            const rankBadge = pos <= 3 ? 'bg-red-500' : pos <= 7 ? 'bg-orange-400' : '';
-                            const rowBg = pos <= 3 ? 'bg-red-50/40' : '';
-                            const empTurno = empTurnoMap.get(emp.codigoEmp) || '';
-                            const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
-                            const TurnoIcon = tMeta.icon;
-                            return (
-                              <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-gray-50 cursor-pointer transition-colors`}
-                                onClick={() => openProfile(emp.codigoEmp)}>
-                                <td className="px-3 py-3">
-                                  {rankBadge ? (
-                                    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
-                                  ) : (
-                                    <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
-                                  )}
-                                </td>
-                                <td className="px-3 py-3">
-                                  <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
-                                  <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
-                                </td>
-                                <td className="px-3 py-3">
-                                  <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
-                                    <TurnoIcon className="h-3 w-3" /> {empTurno}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-3 text-right">
-                                  <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>{emp.totalFuera}</span>
-                                </td>
-                                <td className="px-3 py-3 text-right"><span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span></td>
-                                <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
-                                <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
-                                <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.eventosCount}</span></td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+                {/* ── Sub-tabs: Tiempo / Salidas ── */}
+                <div className="flex gap-1 mb-3">
+                  <button onClick={() => setRankingSubTab('tiempo')}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-t-lg border-b-2 transition-colors ${rankingSubTab === 'tiempo' ? 'border-red-500 text-red-600 bg-red-50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                    Mayor Tiempo Fuera
+                  </button>
+                  <button onClick={() => setRankingSubTab('salidas')}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-t-lg border-b-2 transition-colors ${rankingSubTab === 'salidas' ? 'border-purple-600 text-purple-700 bg-purple-50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                    Mayor Cantidad de Salidas
+                  </button>
                 </div>
 
-                {/* ── Ranking por Cantidad de Salidas ── */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-sm font-bold text-gray-800">Ranking por Mayor Cantidad de Salidas</h2>
-                    <span className="text-xs text-gray-400">{rankingByExits.length} operadores</span>
-                  </div>
-                  <div className="border border-gray-200 rounded-lg overflow-hidden">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="bg-gray-50 text-left">
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-20">Turno</th>
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-16">Salidas</th>
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-32">T. Fuera Deposito</th>
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Prom/Dia</th>
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Dias</th>
-                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Mayor Dia</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                          {rankingByExits.map((emp, idx) => {
-                            const pos = idx + 1;
-                            const rankBadge = pos <= 3 ? 'bg-purple-600' : pos <= 7 ? 'bg-purple-400' : '';
-                            const rowBg = pos <= 3 ? 'bg-purple-50/40' : '';
-                            const empTurno = empTurnoMap.get(emp.codigoEmp) || '';
-                            const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
-                            const TurnoIcon = tMeta.icon;
-                            return (
-                              <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-gray-50 cursor-pointer transition-colors`}
-                                onClick={() => openProfile(emp.codigoEmp)}>
-                                <td className="px-3 py-3">
-                                  {rankBadge ? (
-                                    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
-                                  ) : (
-                                    <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
-                                  )}
-                                </td>
-                                <td className="px-3 py-3">
-                                  <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
-                                  <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
-                                </td>
-                                <td className="px-3 py-3">
-                                  <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
-                                    <TurnoIcon className="h-3 w-3" /> {empTurno}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-3 text-right">
-                                  <span className="font-mono font-bold text-purple-700">{emp.eventosCount}</span>
-                                </td>
-                                <td className="px-3 py-3 text-right">
-                                  <span className={`font-mono ${durTextColor(emp.totalFueraSegundos)}`}>{emp.totalFuera}</span>
-                                </td>
-                                <td className="px-3 py-3 text-right"><span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span></td>
-                                <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
-                                <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                {/* ── Tabla: Tiempo ── */}
+                {rankingSubTab === 'tiempo' && (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-gray-50 text-left">
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-20">Turno</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-32">T. Fuera Deposito</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Prom/Dia</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Dias</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Mayor Dia</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-16">Eventos</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {rankingByTime.map((emp, idx) => {
+                          const pos = idx + 1;
+                          const rankBadge = pos <= 3 ? 'bg-red-500' : pos <= 7 ? 'bg-orange-400' : '';
+                          const rowBg = pos <= 3 ? 'bg-red-50/40' : '';
+                          const empTurno = empTurnoMap.get(emp.codigoEmp) || '';
+                          const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
+                          const TurnoIcon = tMeta.icon;
+                          return (
+                            <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-gray-50 cursor-pointer transition-colors`}
+                              onClick={() => openProfile(emp.codigoEmp)}>
+                              <td className="px-3 py-3">
+                                {rankBadge ? (
+                                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
+                                ) : (
+                                  <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-3">
+                                <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
+                                <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
+                              </td>
+                              <td className="px-3 py-3">
+                                <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
+                                  <TurnoIcon className="h-3 w-3" /> {empTurno}
+                                </span>
+                              </td>
+                              <td className="px-3 py-3 text-right">
+                                <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>{emp.totalFuera}</span>
+                              </td>
+                              <td className="px-3 py-3 text-right"><span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span></td>
+                              <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
+                              <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
+                              <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.eventosCount}</span></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
+                )}
+
+                {/* ── Tabla: Salidas ── */}
+                {rankingSubTab === 'salidas' && (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-gray-50 text-left">
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-20">Turno</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-16">Salidas</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-32">T. Fuera Deposito</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Prom/Dia</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Dias</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Mayor Dia</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {rankingByExits.map((emp, idx) => {
+                          const pos = idx + 1;
+                          const rankBadge = pos <= 3 ? 'bg-purple-600' : pos <= 7 ? 'bg-purple-400' : '';
+                          const rowBg = pos <= 3 ? 'bg-purple-50/40' : '';
+                          const empTurno = empTurnoMap.get(emp.codigoEmp) || '';
+                          const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
+                          const TurnoIcon = tMeta.icon;
+                          return (
+                            <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-gray-50 cursor-pointer transition-colors`}
+                              onClick={() => openProfile(emp.codigoEmp)}>
+                              <td className="px-3 py-3">
+                                {rankBadge ? (
+                                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
+                                ) : (
+                                  <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-3">
+                                <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
+                                <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
+                              </td>
+                              <td className="px-3 py-3">
+                                <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
+                                  <TurnoIcon className="h-3 w-3" /> {empTurno}
+                                </span>
+                              </td>
+                              <td className="px-3 py-3 text-right">
+                                <span className="font-mono font-bold text-purple-700">{emp.eventosCount}</span>
+                              </td>
+                              <td className="px-3 py-3 text-right">
+                                <span className={`font-mono ${durTextColor(emp.totalFueraSegundos)}`}>{emp.totalFuera}</span>
+                              </td>
+                              <td className="px-3 py-3 text-right"><span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span></td>
+                              <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
+                              <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                )}
 
                 {/* ── Por Turno cards ── */}
                 {filteredTurnoCards.length > 0 && (
