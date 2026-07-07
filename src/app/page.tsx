@@ -83,6 +83,9 @@ const turnoMeta: Record<string, { label: string; icon: typeof Sun; bg: string; t
 
 const DEFAULT_TURNO_META = { label: '—', icon: Clock, bg: 'bg-gray-50', text: 'text-gray-400', border: 'border-gray-200' };
 
+const EMPRESAS_EXCLUIDAS = ['GESTION EE-EXTERNO', 'GESTION EE-EXTERNO(SELECCION)', 'G.L.D. GREMIAL EE'];
+const isEmpresaExcluida = (empresa: string) => EMPRESAS_EXCLUIDAS.some(ex => empresa.toUpperCase().includes(ex.toUpperCase()));
+
 /* ═══════════════════════════════════════
    TOAST NOTIFICATION
    ═══════════════════════════════════════ */
@@ -195,8 +198,8 @@ export default function Home() {
   // Filter employees by fechaFilter
   const filteredEmployees = useMemo(() => {
     if (!data) return [];
-    if (!fechaFilter) return data.employees;
-    return data.employees.filter(e => e.fecha === fechaFilter);
+    const base = fechaFilter ? data.employees.filter(e => e.fecha === fechaFilter) : data.employees;
+    return base.filter(e => !isEmpresaExcluida(e.empresa));
   }, [data, fechaFilter]);
 
   // Build map: codigoEmp -> primary turno (most frequent turno across all their days)
@@ -313,12 +316,21 @@ export default function Home() {
   const filteredRanking = useMemo(() => {
     if (!data) return [];
     return activeRanking.filter(e => {
+      if (isEmpresaExcluida(e.empresa)) return false;
       const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || String(e.codigoEmp).includes(search);
       const empTurno = empTurnoMap.get(e.codigoEmp) || 'OTRO';
       const matchTurno = filterTurno === 'all' || empTurno === filterTurno;
       return matchSearch && matchTurno;
     });
   }, [data, search, filterTurno, empTurnoMap, activeRanking]);
+
+  const rankingByTime = useMemo(() =>
+    [...filteredRanking].sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos),
+    [filteredRanking]);
+
+  const rankingByExits = useMemo(() =>
+    [...filteredRanking].sort((a, b) => b.eventosCount - a.eventosCount || b.totalFueraSegundos - a.totalFueraSegundos),
+    [filteredRanking]);
 
   const filteredTurnoCards = useMemo(() => {
     if (!data) return [];
@@ -700,13 +712,12 @@ export default function Home() {
                   <span className="text-sm"><b className="text-red-600">{data.summary.totalEmployees}</b> <span className="text-gray-500">empleados</span></span>
                 </div>
 
-                {/* ── Ranking table ── */}
+                {/* ── Ranking por Tiempo Fuera ── */}
                 <div>
                   <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-sm font-bold text-gray-800">Ranking por Tiempo Fuera de Deposito</h2>
-                    <span className="text-xs text-gray-400">{filteredRanking.length} operadores</span>
+                    <h2 className="text-sm font-bold text-gray-800">Ranking por Mayor Tiempo Fuera</h2>
+                    <span className="text-xs text-gray-400">{rankingByTime.length} operadores</span>
                   </div>
-
                   <div className="border border-gray-200 rounded-lg overflow-hidden">
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
@@ -723,14 +734,13 @@ export default function Home() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                          {filteredRanking.map((emp, idx) => {
+                          {rankingByTime.map((emp, idx) => {
                             const pos = idx + 1;
                             const rankBadge = pos <= 3 ? 'bg-red-500' : pos <= 7 ? 'bg-orange-400' : '';
                             const rowBg = pos <= 3 ? 'bg-red-50/40' : '';
                             const empTurno = empTurnoMap.get(emp.codigoEmp) || '';
                             const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
                             const TurnoIcon = tMeta.icon;
-
                             return (
                               <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-gray-50 cursor-pointer transition-colors`}
                                 onClick={() => openProfile(emp.codigoEmp)}>
@@ -757,6 +767,72 @@ export default function Home() {
                                 <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
                                 <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
                                 <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.eventosCount}</span></td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── Ranking por Cantidad de Salidas ── */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-sm font-bold text-gray-800">Ranking por Mayor Cantidad de Salidas</h2>
+                    <span className="text-xs text-gray-400">{rankingByExits.length} operadores</span>
+                  </div>
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-gray-50 text-left">
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-20">Turno</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-16">Salidas</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-32">T. Fuera Deposito</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Prom/Dia</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Dias</th>
+                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Mayor Dia</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {rankingByExits.map((emp, idx) => {
+                            const pos = idx + 1;
+                            const rankBadge = pos <= 3 ? 'bg-purple-600' : pos <= 7 ? 'bg-purple-400' : '';
+                            const rowBg = pos <= 3 ? 'bg-purple-50/40' : '';
+                            const empTurno = empTurnoMap.get(emp.codigoEmp) || '';
+                            const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
+                            const TurnoIcon = tMeta.icon;
+                            return (
+                              <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-gray-50 cursor-pointer transition-colors`}
+                                onClick={() => openProfile(emp.codigoEmp)}>
+                                <td className="px-3 py-3">
+                                  {rankBadge ? (
+                                    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
+                                  ) : (
+                                    <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-3">
+                                  <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
+                                  <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
+                                </td>
+                                <td className="px-3 py-3">
+                                  <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
+                                    <TurnoIcon className="h-3 w-3" /> {empTurno}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-3 text-right">
+                                  <span className="font-mono font-bold text-purple-700">{emp.eventosCount}</span>
+                                </td>
+                                <td className="px-3 py-3 text-right">
+                                  <span className={`font-mono ${durTextColor(emp.totalFueraSegundos)}`}>{emp.totalFuera}</span>
+                                </td>
+                                <td className="px-3 py-3 text-right"><span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span></td>
+                                <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
+                                <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
                               </tr>
                             );
                           })}
