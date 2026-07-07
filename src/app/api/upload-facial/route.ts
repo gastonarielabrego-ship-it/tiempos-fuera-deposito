@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
       const dni = String(getRowValue(row, 'DNI') || '');
       if (!persona) continue;
       const fecha = parseExcelDate(getRowValue(row, 'Fecha'));
-      const hora = parseExcelTime(getRowValue(row, 'y', 'Hora', 'hora'));
+      const hora = parseExcelTime(getRowValue(row, 'Hora', 'hora', 'horario'));
       const zona = String(getRowValue(row, 'Zona') || '');
       if (!fecha || !hora) continue;
       values.push([crypto.randomUUID(), dni, persona, fecha, hora, 'FACIAL', zona]);
@@ -85,9 +85,14 @@ function parseExcelTime(raw: unknown): string {
 }
 
 function getRowValue(row: Record<string, unknown>, ...keys: string[]): unknown {
-  for (const k of keys) {
-    if (row[k] !== undefined && row[k] !== '') return row[k];
-    if (row[k + ' '] !== undefined && row[k + ' '] !== '') return row[k + ' '];
+  const rowKeys = Object.keys(row);
+  for (const target of keys) {
+    const targetLower = target.toLowerCase().trim();
+    for (const rk of rowKeys) {
+      if (rk.toLowerCase().trim() === targetLower || rk.toLowerCase().trim().startsWith(targetLower)) {
+        if (row[rk] !== undefined && row[rk] !== '') return row[rk];
+      }
+    }
   }
   return '';
 }
