@@ -70,18 +70,15 @@ export async function GET() {
       });
     }
 
-    // Build unified lookup map from AuxRecord
-    // Key: dni|fecha (with fallback nombre|fecha)
-    // Value: { faciales: {hora, zona}[], comidas: string[] }
-    const auxMapByDni = new Map<string, { faciales: { hora: string; zona: string }[]; comidas: string[] }>();
-    const auxMapByName = new Map<string, { faciales: { hora: string; zona: string }[]; comidas: string[] }>();
+    // Build lookup map from AuxRecord by DNI only
+    // Key: dni|fecha  |  Value: { faciales: {hora, zona}[], comidas: string[] }
+    const auxMap = new Map<string, { faciales: { hora: string; zona: string }[]; comidas: string[] }>();
 
     let totalComidas = 0;
     let totalFacial = 0;
 
     for (const r of auxRecords) {
       const dni = String(r.dni ?? '').trim();
-      const nombre = String(r.nombre ?? '').toUpperCase();
       const fecha = String(r.fecha ?? '');
       const hora = String(r.hora ?? '');
       const tipo = String(r.tipo ?? '');
@@ -90,20 +87,12 @@ export async function GET() {
       if (tipo === 'COMIDA') totalComidas++;
       if (tipo === 'FACIAL') totalFacial++;
 
-      const dniKey = dni ? `${dni}|${fecha}` : '';
-      const nameKey = `${nombre.toUpperCase()}|${fecha}`;
-
-      // Ensure map entries exist
-      if (dniKey) {
-        if (!auxMapByDni.has(dniKey)) auxMapByDni.set(dniKey, { faciales: [], comidas: [] });
-        const entry = auxMapByDni.get(dniKey)!;
-        if (tipo === 'FACIAL') entry.faciales.push({ hora, zona: detalle });
-        if (tipo === 'COMIDA') entry.comidas.push(hora);
-      }
-      if (!auxMapByName.has(nameKey)) auxMapByName.set(nameKey, { faciales: [], comidas: [] });
-      const nameEntry = auxMapByName.get(nameKey)!;
-      if (tipo === 'FACIAL') nameEntry.faciales.push({ hora, zona: detalle });
-      if (tipo === 'COMIDA') nameEntry.comidas.push(hora);
+      if (!dni) continue;
+      const key = `${dni}|${fecha}`;
+      if (!auxMap.has(key)) auxMap.set(key, { faciales: [], comidas: [] });
+      const entry = auxMap.get(key)!;
+      if (tipo === 'FACIAL') entry.faciales.push({ hora, zona: detalle });
+      if (tipo === 'COMIDA') entry.comidas.push(hora);
     }
 
     // Group access records by (codigoEmp, fecha)
@@ -134,9 +123,8 @@ export async function GET() {
       else if (jornadaRaw.includes('TT')) turno = 'TT';
       else if (jornadaRaw.includes('TN')) turno = 'TN';
 
-      const nombreKey = `${String(first.nombre ?? '').toUpperCase()}|${first.fecha}`;
       const dniKey = String(first.dni ?? '').trim() ? `${String(first.dni ?? '').trim()}|${String(first.fecha ?? '')}` : '';
-      const auxData = (dniKey && auxMapByDni.has(dniKey)) ? auxMapByDni.get(dniKey)! : (auxMapByName.get(nombreKey) || { faciales: [], comidas: [] });
+      const auxData = (dniKey && auxMap.has(dniKey)) ? auxMap.get(dniKey)! : { faciales: [], comidas: [] };
 
       // Raw access events for timeline
       const accesosEventos: AccesoEvento[] = sorted.map(r => ({

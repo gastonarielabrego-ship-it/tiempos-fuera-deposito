@@ -36,7 +36,7 @@ export async function GET(
     });
     const movimientos = movResult.rows.map((r: Record<string, unknown>) => ({ hora: String(r.hora ?? ''), terminal: String(r.terminal ?? '') }));
 
-    // Aux records (facial + comida) from unified AuxRecord table
+    // Aux records (facial + comida) from unified AuxRecord table - DNI only
     let dni = '';
     const accDniResult = await db.execute({
       sql: 'SELECT dni FROM AccessRecord WHERE codigoEmp = ? AND fecha = ? LIMIT 1',
@@ -46,19 +46,12 @@ export async function GET(
       dni = String((accDniResult.rows[0] as Record<string, unknown>).dni ?? '').trim();
     }
 
-    let auxResult;
-    if (dni) {
-      auxResult = await db.execute({
-        sql: 'SELECT hora, tipo, detalle FROM AuxRecord WHERE dni = ? AND fecha = ? ORDER BY hora ASC',
-        args: [dni, sancion.fecha],
-      });
-    }
-    if (!auxResult || auxResult.rows.length === 0) {
-      auxResult = await db.execute({
-        sql: 'SELECT hora, tipo, detalle FROM AuxRecord WHERE UPPER(nombre) = UPPER(?) AND fecha = ? ORDER BY hora ASC',
-        args: [sancion.nombre, sancion.fecha],
-      });
-    }
+    const auxResult = dni
+      ? await db.execute({
+          sql: 'SELECT hora, tipo, detalle FROM AuxRecord WHERE dni = ? AND fecha = ? ORDER BY hora ASC',
+          args: [dni, sancion.fecha],
+        })
+      : { rows: [] };
     const auxRegistros = auxResult.rows.map((r: Record<string, unknown>) => ({
       hora: String(r.hora ?? ''), tipo: String(r.tipo ?? ''), detalle: String(r.detalle ?? ''),
     }));

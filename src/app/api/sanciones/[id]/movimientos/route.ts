@@ -30,21 +30,13 @@ export async function GET(
       dni = String((accResult.rows[0] as Record<string, unknown>).dni ?? '').trim();
     }
 
-    // Query AuxRecord by dni (with fallback by nombre)
-    let result;
-    if (dni) {
-      result = await db.execute({
-        sql: 'SELECT hora, tipo, detalle FROM AuxRecord WHERE dni = ? AND fecha = ? ORDER BY hora ASC',
-        args: [dni, fecha],
-      });
-    }
-    if (!result || result.rows.length === 0) {
-      // Case-insensitive name match
-      result = await db.execute({
-        sql: 'SELECT hora, tipo, detalle FROM AuxRecord WHERE UPPER(nombre) = UPPER(?) AND fecha = ? ORDER BY hora ASC',
-        args: [nombre, fecha],
-      });
-    }
+    // Query AuxRecord by dni only
+    const result = dni
+      ? await db.execute({
+          sql: 'SELECT hora, tipo, detalle FROM AuxRecord WHERE dni = ? AND fecha = ? ORDER BY hora ASC',
+          args: [dni, fecha],
+        })
+      : { rows: [] };
 
     return NextResponse.json(result.rows);
   } catch (error) {
