@@ -2,18 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 
 async function ensureTable() {
+  // Base table (original columns)
   await db.execute({
     sql: `CREATE TABLE IF NOT EXISTS Sancion (
       id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8))) || '-' || lower(hex(randomblob(4))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab', abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(12)))),
       codigoEmp INTEGER NOT NULL,
-      nombre TEXT NOT NULL,
+      nombre TEXT NOT NULL DEFAULT '',
       empresa TEXT NOT NULL DEFAULT '',
       sector TEXT NOT NULL DEFAULT '',
       jornada TEXT NOT NULL DEFAULT '',
-      fecha TEXT NOT NULL,
-      salida TEXT NOT NULL,
-      entrada TEXT NOT NULL,
-      duracion TEXT NOT NULL,
+      fecha TEXT NOT NULL DEFAULT '',
+      salida TEXT NOT NULL DEFAULT '',
+      entrada TEXT NOT NULL DEFAULT '',
+      duracion TEXT NOT NULL DEFAULT '',
       duracionSegundos INTEGER NOT NULL DEFAULT 0,
       tipo TEXT NOT NULL DEFAULT '',
       tipoLabel TEXT NOT NULL DEFAULT '',
@@ -21,13 +22,17 @@ async function ensureTable() {
     )`,
     args: [],
   });
+  // Migrate: add eventos column if missing
+  try {
+    await db.execute({ sql: "ALTER TABLE Sancion ADD COLUMN eventos TEXT NOT NULL DEFAULT ''", args: [] });
+  } catch { /* column already exists */ }
 }
 
 export async function POST(req: NextRequest) {
   try {
     await ensureTable();
     const body = await req.json();
-    const { codigoEmp, fecha, salida, entrada, duracion, duracionSegundos, tipo, tipoLabel, nombre, empresa, sector, jornada } = body;
+    const { codigoEmp, fecha, salida, entrada, duracion, duracionSegundos, tipo, tipoLabel, nombre, empresa, sector, jornada, eventos } = body;
 
     if (!codigoEmp || !tipo) {
       return NextResponse.json({ error: 'Faltan datos requeridos' }, { status: 400 });
@@ -43,17 +48,35 @@ export async function POST(req: NextRequest) {
     let empSector = sector || '';
     let empJornada = jornada || '';
 
+    // Lookup employee from DB if nombre not provided
     if (!empNombre) {
-      const result = await db.execute({
-        sql: 'SELECT DISTINCT nombre, empresa, sector, jornada FROM AccessRecord WHERE codigoEmp = ? AND fecha = ? LIMIT 1',
-        args: [String(codigoEmp), fecha],
-      });
-      const row = result.rows[0] as Record<string, unknown> | undefined;
-      if (row) {
-        empNombre = String(row.nombre ?? '');
-        empEmpresa = String(row.empresa ?? '');
-        empSector = String(row.sector ?? '');
-        empJornada = String(row.jornada ?? '');
+      // Try with fecha first
+      if (fecha) {
+        const result = await db.execute({
+          sql: 'SELECT DISTINCT nombre, empresa, sector, jornada FROM AccessRecord WHERE codigoEmp = ? AND fecha = ? LIMIT 1',
+          args: [String(codigoEmp), fecha],
+        });
+        const row = result.rows[0] as Record<string, unknown> | undefined;
+        if (row) {
+          empNombre = String(row.nombre ?? '');
+          empEmpresa = String(row.empresa ?? '');
+          empSector = String(row.sector ?? '');
+          empJornada = String(row.jornada ?? '');
+        }
+      }
+      // Fallback: search by codigoEmp only (any date)
+      if (!empNombre) {
+        const result2 = await db.execute({
+          sql: 'SELECT DISTINCT nombre, empresa, sector, jornada FROM AccessRecord WHERE codigoEmp = ? LIMIT 1',
+          args: [String(codigoEmp)],
+        });
+        const row2 = result2.rows[0] as Record<string, unknown> | undefined;
+        if (row2) {
+          empNombre = String(row2.nombre ?? '');
+          empEmpresa = String(row2.empresa ?? '');
+          empSector = String(row2.sector ?? '');
+          empJornada = String(row2.jornada ?? '');
+        }
       }
     }
 
@@ -68,11 +91,12 @@ export async function POST(req: NextRequest) {
       'multiple-salidas': 'MAYOR CANTIDAD DE SALIDAS',
     };
     const resolvedTipoLabel = tipoLabel || tipoLabels[tipo] || tipo.toUpperCase();
+    const eventosJson = eventos ? JSON.stringify(eventos) : '';
 
     await db.execute({
-      sql: `INSERT INTO Sancion (codigoEmp, nombre, empresa, sector, jornada, fecha, salida, entrada, duracion, duracionSegundos, tipo, tipoLabel)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [codigoEmp, empNombre, empEmpresa, empSector, empJornada, fecha, salida, entrada, duracion, duracionSegundos || 0, tipo, resolvedTipoLabel],
+      sql: `INSERT INTO Sancion (codigoEmp, nombre, empresa, sector, jornada, fecha, salida, entrada, duracion, duracionSegundos, tipo, tipoLabel, eventos)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [codigoEmp, empNombre, empEmpresa, empSector, empJornada, fecha || '', salida || '', entrada || '', duracion || '', duracionSegundos || 0, tipo, resolvedTipoLabel, eventosJson],
     });
 
     return NextResponse.json({ success: true });
@@ -113,6 +137,7 @@ export async function GET(req: NextRequest) {
       duracionSegundos: Number(r.duracionSegundos ?? 0),
       tipo: String(r.tipo ?? ''),
       tipoLabel: String(r.tipoLabel ?? ''),
+      eventos: String(r.eventos ?? ''),
       createdAt: String(r.createdAt ?? ''),
     }));
 

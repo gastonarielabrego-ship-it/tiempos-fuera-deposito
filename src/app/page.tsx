@@ -377,10 +377,21 @@ export default function Home() {
   const maxFuera = activeRanking[0];
   const totalEventos = filteredEmployees.reduce((s, e) => s + e.tiemposFuera.length, 0) || 0;
 
+  // Get individual exit events for an employee from filteredEmployees
+  const getEmpEventos = useCallback((codigoEmp: number) => {
+    return filteredEmployees
+      .filter(e => e.codigoEmp === codigoEmp)
+      .flatMap(e => e.tiemposFuera.map(tf => ({
+        salida: tf.salida, entrada: tf.entrada,
+        duracion: tf.duracion, duracionSegundos: tf.duracionSegundos,
+        fecha: e.fecha,
+      })));
+  }, [filteredEmployees]);
+
   const hasData = data && data.employees.length > 0;
   const isEmpty = data && data.employees.length === 0 && !error;
 
-  const generateSancion = useCallback(async (codigoEmp: number, fecha: string, salida: string, entrada: string, duracion: string, duracionSegundos: number, tipo: string, nombre?: string, empresa?: string, sector?: string, jornada?: string) => {
+  const generateSancion = useCallback(async (codigoEmp: number, fecha: string, salida: string, entrada: string, duracion: string, duracionSegundos: number, tipo: string, nombre?: string, empresa?: string, sector?: string, jornada?: string, eventos?: { salida: string; entrada: string; duracion: string; duracionSegundos: number; fecha: string }[]) => {
     try {
       const tipoLabels: Record<string, string> = {
         desayuno: 'EXCESO DE DESAYUNO',
@@ -390,7 +401,7 @@ export default function Home() {
       };
       const r = await window.fetch('/api/sanciones', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ codigoEmp, fecha, salida, entrada, duracion, duracionSegundos, tipo, tipoLabel: tipoLabels[tipo] || tipo.toUpperCase(), ...(nombre ? { nombre } : {}), ...(empresa ? { empresa } : {}), ...(sector ? { sector } : {}), ...(jornada ? { jornada } : {}) }),
+        body: JSON.stringify({ codigoEmp, fecha, salida, entrada, duracion, duracionSegundos, tipo, tipoLabel: tipoLabels[tipo] || tipo.toUpperCase(), ...(nombre ? { nombre } : {}), ...(empresa ? { empresa } : {}), ...(sector ? { sector } : {}), ...(jornada ? { jornada } : {}), ...(eventos ? { eventos } : {}) }),
       });
       if (r.ok) {
         showToast('Sancion registrada correctamente', 'success');
@@ -880,7 +891,7 @@ export default function Home() {
                               <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
                               <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
                               <td className="px-3 py-3 text-center" onClick={e => e.stopPropagation()}>
-                                <button onClick={() => generateSancion(emp.codigoEmp, emp.maxDiaFecha || '', '', '', emp.totalFuera, emp.totalFueraSegundos, 'multiple-salidas', emp.nombre, emp.empresa, emp.sector, '')}
+                                <button onClick={() => generateSancion(emp.codigoEmp, emp.maxDiaFecha || '', '', '', emp.totalFuera, emp.totalFueraSegundos, 'multiple-salidas', emp.nombre, emp.empresa, emp.sector, '', getEmpEventos(emp.codigoEmp))}
                                   className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors">
                                   <AlertTriangle className="h-3 w-3" /> Sancionar
                                 </button>

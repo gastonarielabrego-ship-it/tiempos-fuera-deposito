@@ -26,14 +26,20 @@ export async function GET(
       entrada: String(row.entrada ?? ''), duracion: String(row.duracion ?? ''),
       duracionSegundos: Number(row.duracionSegundos ?? 0),
       tipo: String(row.tipo ?? ''), tipoLabel: String(row.tipoLabel ?? ''),
+      eventos: String(row.eventos ?? ''),
       createdAt: String(row.createdAt ?? ''),
     };
 
     // Access records for timeline
-    const movResult = await db.execute({
-      sql: 'SELECT hora, terminal FROM AccessRecord WHERE codigoEmp = ? AND fecha = ? ORDER BY hora ASC',
-      args: [String(sancion.codigoEmp), sancion.fecha],
-    });
+    const movResult = sancion.fecha
+      ? await db.execute({
+          sql: 'SELECT hora, terminal FROM AccessRecord WHERE codigoEmp = ? AND fecha = ? ORDER BY hora ASC',
+          args: [String(sancion.codigoEmp), sancion.fecha],
+        })
+      : await db.execute({
+          sql: 'SELECT hora, terminal FROM AccessRecord WHERE codigoEmp = ? ORDER BY fecha ASC, hora ASC LIMIT 50',
+          args: [String(sancion.codigoEmp)],
+        });
     const movimientos = movResult.rows.map((r: Record<string, unknown>) => ({ hora: String(r.hora ?? ''), terminal: String(r.terminal ?? '') }));
 
     // Aux records (facial + comida) from unified AuxRecord table - DNI only
@@ -154,7 +160,17 @@ async function generateDocx(d: Record<string, unknown>): Promise<Buffer> {
   const fullW = 9000;
 
   // Evidence text
-  const evidencia = `El colaborador ${d.nombre} (Legajo ${d.codigoEmp}), empleado de ${d.empresa}, sector ${d.sector}, registro una salida del deposito a las ${d.salida} hs y un reingreso a las ${d.entrada} hs del dia ${d.fecha}, generando un tiempo fuera de deposito de ${d.duracion}, superando el tiempo maximo permitido para el periodo correspondiente. Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).`;
+    let evidencia = '';
+    const eventosData = d.eventos ? JSON.parse(String(d.eventos)) : [];
+    if (eventosData.length > 0) {
+      // Multiple salidas - list all individual events
+      const salidasList = eventosData.map((ev: { salida: string; entrada: string; duracion: string; fecha?: string }, i: number) =>
+        `  ${i + 1}. Salida: ${ev.salida} hs - Entrada: ${ev.entrada} hs - Duracion: ${ev.duracion}${ev.fecha ? ' (Fecha: ' + ev.fecha + ')' : ''}`
+      ).join('\n');
+      evidencia = `El colaborador ${d.nombre} (Legajo ${d.codigoEmp}), empleado de ${d.empresa}, sector ${d.sector}, registro un total de ${eventosData.length} salidas del deposito con un tiempo acumulado fuera de deposito de ${d.duracion}, superando la cantidad maxima permitida. Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).\n\nDetalle de salidas:\n${salidasList}`;
+    } else {
+      evidencia = `El colaborador ${d.nombre} (Legajo ${d.codigoEmp}), empleado de ${d.empresa}, sector ${d.sector}, registro una salida del deposito a las ${d.salida} hs y un reingreso a las ${d.entrada} hs del dia ${d.fecha}, generando un tiempo fuera de deposito de ${d.duracion}, superando el tiempo maximo permitido para el periodo correspondiente. Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).`;
+    }
 
   // Build movements text
   const allMov = [
@@ -297,14 +313,10 @@ async function generateDocx(d: Record<string, unknown>): Promise<Buffer> {
                     new TextRun({ text: '', break: 1, size: 20 }),
                     value(`Empresa: ${d.empresa} | Sector: ${d.sector}`),
                     new TextRun({ text: '', break: 1, size: 20 }),
-                    value(`Fecha del hecho: ${d.fecha}`),
-                    new TextRun({ text: '', break: 1, size: 20 }),
-                    value(`Salida del deposito: ${d.salida} hs`),
-                    new TextRun({ text: '', break: 1, size: 20 }),
-                    value(`Reingreso al deposito: ${d.entrada} hs`),
-                    new TextRun({ text: '', break: 1, size: 20 }),
-                    value(`Tiempo fuera de deposito: ${d.duracion}`),
-                    new TextRun({ text: '', break: 1, size: 20 }),
+                    ...(d.fecha ? [value(`Fecha del hecho: ${d.fecha}`), new TextRun({ text: '', break: 1, size: 20 })] : []),
+                    ...(eventosData.length > 0
+                      ? [value(`Total salidas: ${eventosData.length}`), new TextRun({ text: '', break: 1, size: 20 }), value(`Tiempo acumulado fuera de deposito: ${d.duracion}`), new TextRun({ text: '', break: 1, size: 20 })]
+                      : [value(`Salida del deposito: ${d.salida} hs`), new TextRun({ text: '', break: 1, size: 20 }), value(`Reingreso al deposito: ${d.entrada} hs`), new TextRun({ text: '', break: 1, size: 20 }), value(`Tiempo fuera de deposito: ${d.duracion}`), new TextRun({ text: '', break: 1, size: 20 })]),
                     value('Exceso supera el maximo permitido.'),
                   ], 5200),
                 ],
