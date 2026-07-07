@@ -423,26 +423,92 @@ export default function Home() {
       ]);
       if (!sancionR.ok) { showToast('Error al obtener sancion', 'error'); return; }
       const sancion = await sancionR.json();
-      const movRows = movR.ok ? await movR.json() : [];
+      const movRows: { fecha: string; hora: string; evento: string; tipo: string; duracion: string }[] = movR.ok ? await movR.json() : [];
 
-      // Build unified movements from sancion + aux records
-      const allMov = [
-        // Access records (from sancion salida/entrada)
-        { hora: sancion.salida, evento: 'Salida Depo', tipo: 'Acceso' },
-        { hora: sancion.entrada, evento: 'Entrada Depo', tipo: 'Acceso' },
-        // Aux records (facial + comida)
-        ...movRows.map((m: { hora: string; tipo: string; detalle: string }) => ({
-          hora: m.hora,
-          evento: m.detalle || (m.tipo === 'FACIAL' ? 'Facial' : 'TK Comida'),
-          tipo: m.tipo === 'FACIAL' ? 'Facial' : 'Comida',
-        })),
-      ].sort((a: { hora: string }, b: { hora: string }) => a.hora.localeCompare(b.hora));
+      const isMultiple = sancion.tipo === 'multiple-salidas';
+
+      // Calculate total accumulated time from movements (salida->entrada pairs)
+      let totalAccSecs = 0;
+      const pairRows: { fecha: string; salida: string; entrada: string; duracion: string; duracionSegs: number }[] = [];
+      const processedEntradas = new Set<number>();
+      for (let i = 0; i < movRows.length; i++) {
+        const m = movRows[i];
+        if (m.tipo === 'Acceso' && m.evento.toLowerCase().includes('salida') && m.duracion) {
+          // Find matching entrada
+          for (let j = i + 1; j < movRows.length; j++) {
+            if (movRows[j].fecha !== m.fecha) break;
+            if (movRows[j].tipo === 'Acceso' && movRows[j].evento.toLowerCase().includes('entrada') && !processedEntradas.has(j)) {
+              const sParts = m.hora.split(':').map(Number);
+              const eParts = movRows[j].hora.split(':').map(Number);
+              const secs = (eParts[0] * 3600 + eParts[1] * 60 + (eParts[2] || 0)) - (sParts[0] * 3600 + sParts[1] * 60 + (sParts[2] || 0));
+              if (secs > 0) {
+                totalAccSecs += secs;
+                pairRows.push({ fecha: m.fecha, salida: m.hora, entrada: movRows[j].hora, duracion: m.duracion, duracionSegs: secs });
+                processedEntradas.add(j);
+              }
+              break;
+            }
+          }
+        }
+      }
+      const totalAccH = Math.floor(totalAccSecs / 3600);
+      const totalAccM = Math.floor((totalAccSecs % 3600) / 60);
+      const totalAccS = totalAccSecs % 60;
+      const totalAccStr = `${String(totalAccH).padStart(2, '0')}:${String(totalAccM).padStart(2, '0')}:${String(totalAccS).padStart(2, '0')}`;
+
+      // Count exits per day
+      const exitsByDay: Record<string, number> = {};
+      for (const m of movRows) {
+        if (m.tipo === 'Acceso' && m.evento.toLowerCase().includes('salida')) {
+          exitsByDay[m.fecha] = (exitsByDay[m.fecha] || 0) + 1;
+        }
+      }
+      const exitsByDayStr = Object.entries(exitsByDay)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([fecha, count]) => `${fecha}: ${count} salida${count > 1 ? 's' : ''}`)
+        .join(' | ');
 
       const today = new Date().toISOString().split('T')[0];
       const [yr, mo, dy] = today.split('-');
 
       const win = window.open('', '_blank', 'width=800,height=1000');
       if (!win) { showToast('Permite ventanas emergentes para imprimir', 'error'); return; }
+
+      // Build the movements table rows - only Acceso (salida/entrada) with duration
+      const movTableRows = movRows
+        .map((m, i) => {
+          const isSalida = m.tipo === 'Acceso' && m.evento.toLowerCase().includes('salida');
+          const isEntrada = m.tipo === 'Acceso' && m.evento.toLowerCase().includes('entrada');
+          const bgStyle = isSalida ? 'background:#FFF3CD;' : isEntrada ? 'background:#D1ECF1;' : '';
+          const durCell = isSalida ? `<td style="${bgStyle}">${m.duracion || '-'}</td>` : '<td></td>';
+          return `<tr style="${bgStyle}"><td>${i + 1}</td><td>${m.fecha}</td><td>${m.hora}</td><td>${m.evento}</td><td>${m.tipo}</td>${durCell}</tr>`;
+        }).join('');
+
+      // Build paired exit table for multiple-salidas
+      const pairTableRows = pairRows.map((p, i) =>
+        `<tr><td>${i + 1}</td><td>${p.fecha}</td><td>${p.salida}</td><td>${p.entrada}</td><td style="font-weight:bold;">${p.duracion}</td></tr>`
+      ).join('');
+
+      // Build incidence description
+      const incidenceDesc = isMultiple
+        ? `El colaborador ${sancion.nombre} (Legajo ${sancion.codigoEmp}), empleado de ${sancion.empresa}, sector ${sancion.sector}, registro multiples salidas del deposito sin justificacion, acumulando un tiempo total fuera de deposito de <b>${totalAccStr}</b> en ${pairRows.length} salida${pairRows.length > 1 ? 's' : ''}. ${exitsByDayStr ? 'Distribucion por dia: ' + exitsByDayStr + '.' : ''} Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).`
+        : `El colaborador ${sancion.nombre} (Legajo ${sancion.codigoEmp}), empleado de ${sancion.empresa}, sector ${sancion.sector}, registro una salida del deposito a las ${sancion.salida} hs y un reingreso a las ${sancion.entrada} hs del dia ${sancion.fecha}, generando un tiempo fuera de deposito de ${sancion.duracion}, superando el tiempo maximo permitido para el periodo correspondiente. Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).`;
+
+      // Build incidence detail section
+      const incidenceDetail = isMultiple
+        ? `Colaborador: ${sancion.nombre} (Legajo: ${sancion.codigoEmp})<br>
+      Empresa: ${sancion.empresa} | Sector: ${sancion.sector}<br>
+      Total de salidas: ${pairRows.length}<br>
+      Tiempo acumulado fuera de deposito: <b>${totalAccStr}</b><br>
+      ${exitsByDayStr ? 'Salidas por dia: ' + exitsByDayStr + '<br>' : ''}
+      Exceso supera el maximo permitido.`
+        : `Colaborador: ${sancion.nombre} (Legajo: ${sancion.codigoEmp})<br>
+      Empresa: ${sancion.empresa} | Sector: ${sancion.sector}<br>
+      Fecha del hecho: ${sancion.fecha}<br>
+      Salida del deposito: ${sancion.salida} hs<br>
+      Reingreso al deposito: ${sancion.entrada} hs<br>
+      Tiempo fuera de deposito: ${sancion.duracion}<br>
+      Exceso supera el maximo permitido.`;
 
       win.document.write(`<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -457,9 +523,13 @@ export default function Home() {
   td, th { border: 1px solid #000; padding: 4px 6px; vertical-align: middle; }
   th, .header-cell { background: #C8C8C8; font-weight: bold; font-size: 10pt; }
   .box-section h3 { font-size: 11pt; font-weight: bold; margin-bottom: 3px; }
-  .mov-table { font-size: 8pt; width: auto; margin-top: 6px; }
+  .mov-table { font-size: 8pt; width: 100%; margin-top: 6px; }
   .mov-table th { background: #DDD; font-size: 8pt; }
   .mov-table td, .mov-table th { padding: 2px 4px; }
+  .pair-table { font-size: 8pt; width: 100%; margin-top: 4px; }
+  .pair-table th { background: #E8D5F5; font-size: 8pt; }
+  .pair-table td, .pair-table th { padding: 2px 4px; }
+  .total-row { background: #F8D7DA !important; font-weight: bold; font-size: 9pt; }
   .footer-img { width: 100%; max-width: 700px; margin-top: 12px; }
   .no-print { margin-bottom: 10px; }
 
@@ -494,7 +564,7 @@ export default function Home() {
   </button>
 </div>
 
-<!-- ═══════════ HOJA 1: EVIDENCIA ═══════════ -->
+<!-- ====== HOJA 1: EVIDENCIA ====== -->
 <img class="header-img" src="/template_header.png" alt="Logo">
 <div class="title">PEDIDO DE EXPLICACION</div>
 
@@ -516,30 +586,36 @@ export default function Home() {
   <tr>
     <td style="width:42%;"><b>${(sancion.tipoLabel || sancion.tipo || '').toUpperCase()}</b></td>
     <td style="width:58%;">
-      Colaborador: ${sancion.nombre} (Legajo: ${sancion.codigoEmp})<br>
-      Empresa: ${sancion.empresa} | Sector: ${sancion.sector}<br>
-      Fecha del hecho: ${sancion.fecha}<br>
-      Salida del deposito: ${sancion.salida} hs<br>
-      Reingreso al deposito: ${sancion.entrada} hs<br>
-      Tiempo fuera de deposito: ${sancion.duracion}<br>
-      Exceso supera el maximo permitido.
+      ${incidenceDetail}
     </td>
   </tr>
 </table>
 
 <div class="box-section">
   <h3>Evidencia del Caso</h3>
-  <table><tr><td style="min-height:140px; vertical-align:top; padding: 6px;">
-    El colaborador ${sancion.nombre} (Legajo ${sancion.codigoEmp}), empleado de ${sancion.empresa}, sector ${sancion.sector}, registro una salida del deposito a las ${sancion.salida} hs y un reingreso a las ${sancion.entrada} hs del dia ${sancion.fecha}, generando un tiempo fuera de deposito de ${sancion.duracion}, superando el tiempo maximo permitido para el periodo correspondiente. Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).
-    ${allMov.length > 0 ? `
-    <table class="mov-table">
-      <tr><th>#</th><th>Hora</th><th>Evento / Movimiento</th><th>Tipo</th></tr>
-      ${allMov.map((m: { hora: string; evento: string; tipo: string }, i: number) => `<tr><td>${i + 1}</td><td>${m.hora}</td><td>${m.evento}</td><td>${m.tipo}</td></tr>`).join('')}
+  <table><tr><td style="min-height:100px; vertical-align:top; padding: 6px;">
+    ${incidenceDesc}
+    ${isMultiple && pairRows.length > 0 ? `
+    <br><br>
+    <table class="pair-table">
+      <tr><th>#</th><th>Fecha</th><th>Salida Depo</th><th>Entrada Depo</th><th>Tiempo Fuera</th></tr>
+      ${pairTableRows}
+      <tr class="total-row"><td colspan="4" style="text-align:right;">TIEMPO ACUMULADO TOTAL:</td><td>${totalAccStr}</td></tr>
     </table>` : ''}
+    ${!isMultiple ? `
+    <table class="mov-table" style="margin-top:6px;">
+      <tr><th>#</th><th>Fecha</th><th>Hora</th><th>Evento / Movimiento</th><th>Tipo</th><th>Tiempo</th></tr>
+      ${movTableRows}
+    </table>` : `
+    <br><br>
+    <table class="mov-table">
+      <tr><th>#</th><th>Fecha</th><th>Hora</th><th>Evento / Movimiento</th><th>Tipo</th><th>Tiempo</th></tr>
+      ${movTableRows}
+    </table>`}
   </td></tr></table>
 </div>
 
-<!-- ═══════════ HOJA 2: DESCARGOS Y FIRMAS ═══════════ -->
+<!-- ====== HOJA 2: DESCARGOS Y FIRMAS ====== -->
 <div class="page-break"></div>
 <div class="page2">
 

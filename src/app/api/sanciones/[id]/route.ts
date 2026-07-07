@@ -18,6 +18,7 @@ export async function GET(
       entrada: String(row.entrada ?? ''), duracion: String(row.duracion ?? ''),
       duracionSegundos: Number(row.duracionSegundos ?? 0),
       tipo: String(row.tipo ?? ''), tipoLabel: String(row.tipoLabel ?? ''),
+      eventos: String(row.eventos ?? ''),
       createdAt: String(row.createdAt ?? ''),
     });
   } catch (error) {
