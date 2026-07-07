@@ -55,8 +55,8 @@ export async function GET(
     }
     if (!auxResult || auxResult.rows.length === 0) {
       auxResult = await db.execute({
-        sql: 'SELECT hora, tipo, detalle FROM AuxRecord WHERE nombre = ? AND fecha = ? ORDER BY hora ASC',
-        args: [sancion.nombre.toUpperCase(), sancion.fecha],
+        sql: 'SELECT hora, tipo, detalle FROM AuxRecord WHERE UPPER(nombre) = UPPER(?) AND fecha = ? ORDER BY hora ASC',
+        args: [sancion.nombre, sancion.fecha],
       });
     }
     const auxRegistros = auxResult.rows.map((r: Record<string, unknown>) => ({

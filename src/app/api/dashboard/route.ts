@@ -91,7 +91,7 @@ export async function GET() {
       if (tipo === 'FACIAL') totalFacial++;
 
       const dniKey = dni ? `${dni}|${fecha}` : '';
-      const nameKey = `${nombre}|${fecha}`;
+      const nameKey = `${nombre.toUpperCase()}|${fecha}`;
 
       // Ensure map entries exist
       if (dniKey) {

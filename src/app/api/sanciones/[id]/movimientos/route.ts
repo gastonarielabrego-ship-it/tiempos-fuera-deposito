@@ -39,8 +39,9 @@ export async function GET(
       });
     }
     if (!result || result.rows.length === 0) {
+      // Case-insensitive name match
       result = await db.execute({
-        sql: 'SELECT hora, tipo, detalle FROM AuxRecord WHERE nombre = ? AND fecha = ? ORDER BY hora ASC',
+        sql: 'SELECT hora, tipo, detalle FROM AuxRecord WHERE UPPER(nombre) = UPPER(?) AND fecha = ? ORDER BY hora ASC',
         args: [nombre, fecha],
       });
     }
