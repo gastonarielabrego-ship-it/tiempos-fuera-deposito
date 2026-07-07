@@ -380,7 +380,7 @@ export default function Home() {
   const hasData = data && data.employees.length > 0;
   const isEmpty = data && data.employees.length === 0 && !error;
 
-  const generateSancion = useCallback(async (codigoEmp: number, fecha: string, salida: string, entrada: string, duracion: string, duracionSegundos: number, tipo: string) => {
+  const generateSancion = useCallback(async (codigoEmp: number, fecha: string, salida: string, entrada: string, duracion: string, duracionSegundos: number, tipo: string, nombre?: string, empresa?: string, sector?: string, jornada?: string) => {
     try {
       const tipoLabels: Record<string, string> = {
         desayuno: 'EXCESO DE DESAYUNO',
@@ -390,7 +390,7 @@ export default function Home() {
       };
       const r = await window.fetch('/api/sanciones', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ codigoEmp, fecha, salida, entrada, duracion, duracionSegundos, tipo, tipoLabel: tipoLabels[tipo] || tipo.toUpperCase() }),
+        body: JSON.stringify({ codigoEmp, fecha, salida, entrada, duracion, duracionSegundos, tipo, tipoLabel: tipoLabels[tipo] || tipo.toUpperCase(), ...(nombre ? { nombre } : {}), ...(empresa ? { empresa } : {}), ...(sector ? { sector } : {}), ...(jornada ? { jornada } : {}) }),
       });
       if (r.ok) {
         showToast('Sancion registrada correctamente', 'success');
@@ -880,7 +880,7 @@ export default function Home() {
                               <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
                               <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
                               <td className="px-3 py-3 text-center" onClick={e => e.stopPropagation()}>
-                                <button onClick={() => generateSancion(emp.codigoEmp, emp.maxDiaFecha || '', '', '', emp.totalFuera, emp.totalFueraSegundos, 'multiple-salidas')}
+                                <button onClick={() => generateSancion(emp.codigoEmp, emp.maxDiaFecha || '', '', '', emp.totalFuera, emp.totalFueraSegundos, 'multiple-salidas', emp.nombre, emp.empresa, emp.sector, '')}
                                   className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors">
                                   <AlertTriangle className="h-3 w-3" /> Sancionar
                                 </button>

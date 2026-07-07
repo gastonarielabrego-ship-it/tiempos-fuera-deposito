@@ -29,7 +29,12 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { codigoEmp, fecha, salida, entrada, duracion, duracionSegundos, tipo, tipoLabel, nombre, empresa, sector, jornada } = body;
 
-    if (!codigoEmp || !fecha || !salida || !entrada || !tipo) {
+    if (!codigoEmp || !tipo) {
+      return NextResponse.json({ error: 'Faltan datos requeridos' }, { status: 400 });
+    }
+    // For aggregated sanciones (multiple-salidas), allow empty salida/entrada/fecha
+    const isAggregated = tipo === 'multiple-salidas';
+    if (!isAggregated && (!fecha || !salida || !entrada)) {
       return NextResponse.json({ error: 'Faltan datos requeridos' }, { status: 400 });
     }
 
@@ -60,6 +65,7 @@ export async function POST(req: NextRequest) {
       desayuno: 'EXCESO DE DESAYUNO',
       'break-tarde': 'EXCESO BREAK TARDE',
       'break-noche': 'EXCESO BREAK NOCHE',
+      'multiple-salidas': 'MAYOR CANTIDAD DE SALIDAS',
     };
     const resolvedTipoLabel = tipoLabel || tipoLabels[tipo] || tipo.toUpperCase();
 
