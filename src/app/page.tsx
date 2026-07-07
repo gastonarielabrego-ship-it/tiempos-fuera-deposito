@@ -1220,7 +1220,7 @@ export default function Home() {
                             const pos = idx + 1;
                             const rowBg = reg.totalFueraSegundos > 3600 ? 'bg-red-50/40' : 'bg-amber-50/30';
                             return (
-                              <tr key={`${reg.codigoEmp}-${reg.fecha}`} className={`${rowBg} hover:bg-amber-50/60 transition-colors`}>
+                              <tr key={`${reg.codigoEmp}-${reg.fecha}`} className={`${rowBg} hover:bg-amber-50/60 transition-colors cursor-pointer`} onClick={() => openProfile(reg.codigoEmp)}>
                                 <td className="px-3 py-2.5"><span className="text-xs text-gray-500 font-medium">{pos}</span></td>
                                 <td className="px-3 py-2.5">
                                   <p className="font-semibold text-gray-800 text-sm">{reg.nombre}</p>
@@ -1233,7 +1233,7 @@ export default function Home() {
                                 <td className="px-3 py-2.5 text-right">
                                   <span className={`font-mono font-bold ${reg.totalFueraSegundos > 3600 ? 'text-red-600' : 'text-amber-700'}`}>{reg.totalFuera}</span>
                                 </td>
-                                <td className="px-3 py-2.5 text-center">
+                                <td className="px-3 py-2.5 text-center" onClick={e => e.stopPropagation()}>
                                   <button onClick={() => {
                                     const eventos = reg.tiemposFuera.map(tf => ({ salida: tf.salida, entrada: tf.entrada, duracion: tf.duracion, duracionSegundos: tf.duracionSegundos, fecha: reg.fecha }));
                                     generateSancion(reg.codigoEmp, reg.fecha, '', '', reg.totalFuera, reg.totalFueraSegundos, 'multiple-salidas', reg.nombre, reg.empresa, reg.sector, reg.jornada, eventos);
