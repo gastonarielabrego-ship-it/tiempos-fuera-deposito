@@ -211,7 +211,15 @@ export default function Home() {
         } else if (json?.count === 0) {
           showToast(`${label}: 0 registros procesados de ${json?.total ?? '?'} filas`, 'error');
         } else {
-          showToast(`${label}: ${json?.count ?? 0} registros cargados`, 'success');
+          let msg = `${label}: ${json?.count ?? 0} registros cargados`;
+          // Warn if terminal column wasn't mapped
+          if (json?.mapping && !json.mapping.terminal) {
+            msg += ` ⚠️ Sin columna Terminal mapeada`;
+          } else if (json?.stats && json.stats.withTerminal === 0) {
+            msg += ` ⚠️ 0 registros con Terminal`;
+          }
+          showToast(msg, json?.mapping && !json.mapping.terminal ? 'error' : 'success');
+          console.log('[upload] Mapping:', json?.mapping, 'Stats:', json?.stats);
         }
         await fetchData();
       } else {

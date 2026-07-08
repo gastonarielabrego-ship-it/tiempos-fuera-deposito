@@ -124,12 +124,22 @@ export async function POST(request: NextRequest) {
 
     console.log(`[upload-accesos] Procesadas ${values.length} filas de ${rows.length} totales (skipped: codigo=${skippedCodigo}, nombre=${skippedNombre}, fecha=${skippedFecha})`);
 
-    const resp: Record<string, unknown> = { success: true, count: values.length, total: rows.length };
+    // Check how many records have non-empty terminal
+    const withTerminal = values.filter(v => v[6] && String(v[6]).length > 0).length;
+
+    const resp: Record<string, unknown> = {
+      success: true, count: values.length, total: rows.length,
+      mapping: {
+        columns: actualColumns,
+        codigo: colCodigo, nombre: colNombre, fecha: colFecha,
+        hora: colHora, terminal: colTerminal, dni: colDNI,
+        jornada: colJornada, sector: colSector, empresa: colEmpresa,
+      },
+      stats: { withTerminal, withoutTerminal: values.length - withTerminal },
+    };
     if (values.length === 0) {
       resp.debug = {
         message: 'Todas las filas fueron descartadas',
-        columns: actualColumns,
-        mapped: { codigo: colCodigo, nombre: colNombre, fecha: colFecha, hora: colHora },
         skipped: { codigo: skippedCodigo, nombre: skippedNombre, fecha: skippedFecha },
         firstRow: rows[0],
       };
