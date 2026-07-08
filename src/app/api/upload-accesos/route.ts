@@ -55,15 +55,15 @@ export async function POST(request: NextRequest) {
     await db.execute({ sql: 'DELETE FROM AccessRecord', args: [] });
 
     // Flexible column mapping
-    const colCodigo = findCol(rows[0], ['Código de empleado', 'Codigo de empleado', 'Código empleado', 'Codigo empleado', 'codigo_empleado', 'codigo', 'Código', 'Codigo', 'Cod.Empleado', 'Cod_Empleado', 'Legajo', 'Nro.Empleado']);
+    const colCodigo = findCol(rows[0], ['Código de empleado', 'Codigo de empleado', 'Código empleado', 'Codigo empleado', 'codigo_empleado', 'codigo', 'Código', 'Codigo', 'Cod.Empleado', 'Cod_Empleado', 'Legajo', 'lega', 'Nro.Empleado']);
     const colNombre = findCol(rows[0], ['Apellidos, Nombre', 'Apellidos y Nombre', 'Apellido, Nombre', 'Apellido y Nombre', 'Apellidos', 'Nombre', 'nombre', 'Apellido Nombre', 'Nombre Completo', 'Empleado', 'Nombre completo']);
     const colFecha = findCol(rows[0], ['Fecha', 'fecha', 'FECHA', 'Date', 'date', 'Fec.', 'Fec']);
     const colHora = findCol(rows[0], ['Hora', 'hora', 'HORA', 'Time', 'time', 'Horario', '__EMPTY', 'Reloj']);
     const colDNI = findCol(rows[0], ['DNI', 'Dni', 'dni', 'D.N.I.', 'Nro.Documento', 'Documento', 'Nro Doc', 'Nº Doc', 'N° Doc']);
-    const colTerminal = findCol(rows[0], ['Terminal', 'terminal', 'TERMINAL', 'Tipo', 'Evento', 'Descripción', 'Descripcion', 'Sentido']);
-    const colJornada = findCol(rows[0], ['Jornada efectiva', 'Jornada Efectiva', 'Jornada', 'jornada', 'Turno', 'turno', 'Jornada efect.']);
+    const colTerminal = findCol(rows[0], ['Terminal', 'terminal', 'TERMINAL', 'FICHERO', 'Fichero', 'fichero', 'Tipo', 'Evento', 'Descripción', 'Descripcion', 'Sentido', 'Movimiento', 'Sentido de paso']);
+    const colJornada = findCol(rows[0], ['Jornada efectiva', 'Jornada Efectiva', 'Jornada', 'jornada', 'Turno', 'turno', 'TURNO', 'Jornada efect.']);
     const colSector = findCol(rows[0], ['Sector', 'sector', 'SECTOR', 'Sección', 'Seccion', 'Area', 'Área', 'Departamento']);
-    const colEmpresa = findCol(rows[0], ['Código de empresa', 'Codigo de empresa', 'Empresa', 'empresa', 'Cod. Empresa', 'Cod Empresa', 'Razon Social', 'Razón Social']);
+    const colEmpresa = findCol(rows[0], ['Código de empresa', 'Codigo de empresa', 'Empresa', 'empresa', 'EMPRESA', 'Cod. Empresa', 'Cod Empresa', 'Razon Social', 'Razón Social']);
 
     console.log('[upload-accesos] Columnas mapeadas:', {
       codigo: colCodigo, nombre: colNombre, fecha: colFecha, hora: colHora,
