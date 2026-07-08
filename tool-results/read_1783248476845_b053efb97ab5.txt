@@ -1,0 +1,632 @@
+     1→     1→'use client';
+     2→     2→
+     3→     3→import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+     4→     4→import { Card, CardContent } from '@/components/ui/card';
+     5→     5→import { Button } from '@/components/ui/button';
+     6→     6→import { Input } from '@/components/ui/input';
+     7→     7→import { Skeleton } from '@/components/ui/skeleton';
+     8→     8→import { ScrollArea } from '@/components/ui/scroll-area';
+     9→     9→import {
+    10→    10→  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+    11→    11→} from '@/components/ui/dialog';
+    12→    12→import {
+    13→    13→  Upload, RefreshCw, Clock, Users, UtensilsCrossed, ScanFace,
+    14→    14→  FileSpreadsheet, Search, Sun, Sunset, Moon, Download,
+    15→    15→  ArrowUpFromLine, ArrowDownToLine, ChevronDown, AlertTriangle,
+    16→    16→} from 'lucide-react';
+    17→    17→
+    18→    18→/* ═══════════════════════════════════════
+    19→    19→   TYPES
+    20→    20→   ═══════════════════════════════════════ */
+    21→    21→
+    22→    22→interface TimeOutPair { salida: string; entrada: string; duracionSegundos: number; duracion: string; }
+    23→    23→interface AccesoEvento { hora: string; terminal: string; }
+    24→    24→
+    25→    25→interface EmployeeDay {
+    26→    26→  codigoEmp: number; nombre: string; fecha: string; jornada: string; sector: string; empresa: string;
+    27→    27→  turno: string; tiemposFuera: TimeOutPair[]; totalFueraSegundos: number; totalFuera: string;
+    28→    28→  comidasHoras: string[]; facialRegistros: { hora: string; zona: string }[];
+    29→    29→  accesosEventos: AccesoEvento[];
+    30→    30→}
+    31→    31→
+    32→    32→interface RankingEntry {
+    33→    33→  codigoEmp: number; nombre: string; empresa: string; sector: string;
+    34→    34→  totalFueraSegundos: number; totalFuera: string;
+    35→    35→  diasCount: number; avgPorDia: string; maxDiaFuera: string; maxDiaFecha: string;
+    36→    36→  eventosCount: number;
+    37→    37→}
+    38→    38→
+    39→    39→interface TurnoRanking { turno: string; label: string; totalFueraSegundos: number; totalFuera: string; eventosCount: number; empleados: RankingEntry[]; }
+    40→    40→
+    41→    41→interface Summary {
+    42→    42→  totalEmployees: number; totalRecords: number; totalComidas: number;
+    43→    43→  totalFacial: number; avgOutsidePerEmployee: string; dates: string[];
+    44→    44→}
+    45→    45→
+    46→    46→interface DashboardData {
+    47→    47→  employees: EmployeeDay[]; ranking: RankingEntry[];
+    48→    48→  rankingPorTurno: TurnoRanking[]; turnos: string[]; summary: Summary;
+    49→    49→}
+    50→    50→
+    51→    51→/* ═══════════════════════════════════════
+    52→    52→   HELPERS
+    53→    53→   ═══════════════════════════════════════ */
+    54→    54→
+    55→    55→const timeToS = (t: string) => {
+    56→    56→  if (!t) return 0;
+    57→    57→  const p = t.split(':');
+    58→    58→  return (Number(p[0]) || 0) * 3600 + (Number(p[1]) || 0) * 60 + (Number(p[2]) || 0);
+    59→    59→};
+    60→    60→
+    61→    61→const formatHMS = (s: number) => {
+    62→    62→  const h = Math.floor(s / 3600);
+    63→    63→  const m = Math.floor((s % 3600) / 60);
+    64→    64→  const sec = s % 60;
+    65→    65→  return `${h}h ${m}m ${sec}s`;
+    66→    66→};
+    67→    67→
+    68→    68→const durTextColor = (s: number) => s <= 1800 ? 'text-emerald-600' : s <= 3600 ? 'text-amber-600' : 'text-red-600';
+    69→    69→
+    70→    70→const turnoMeta: Record<string, { label: string; icon: typeof Sun; bg: string; text: string; border: string }> = {
+    71→    71→  TM: { label: 'Mañana', icon: Sun, bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+    72→    72→  TT: { label: 'Tarde', icon: Sunset, bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200' },
+    73→    73→  TN: { label: 'Noche', icon: Moon, bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+    74→    74→  OTRO: { label: 'Sin clasificar', icon: Clock, bg: 'bg-gray-50', text: 'text-gray-600', border: 'border-gray-200' },
+    75→    75→};
+    76→    76→
+    77→    77→/* ═══════════════════════════════════════
+    78→    78→   MAIN PAGE
+    79→    79→   ═══════════════════════════════════════ */
+    80→    80→
+    81→    81→export default function Home() {
+    82→    82→  const [data, setData] = useState<DashboardData | null>(null);
+    83→    83→  const [loading, setLoading] = useState(true);
+    84→    84→  const [uploading, setUploading] = useState<string | null>(null);
+    85→    85→  const [tab, setTab] = useState<'ranking' | 'turno'>('ranking');
+    86→    86→  const [search, setSearch] = useState('');
+    87→    87→  const [filterTurno, setFilterTurno] = useState('all');
+    88→    88→  const [filterDate, setFilterDate] = useState('all');
+    89→    89→  const [showUpload, setShowUpload] = useState(false);
+    90→    90→  const [profileEmp, setProfileEmp] = useState<EmployeeDay | null>(null);
+    91→    91→  const [profileDateIdx, setProfileDateIdx] = useState(0);
+    92→    92→  const fileRef = useRef<HTMLInputElement>(null);
+    93→    93→
+    94→    94→  const fetch = useCallback(async () => {
+    95→    95→    setLoading(true);
+    96→    96→    try { const r = await fetch('/api/dashboard'); if (r.ok) setData(await r.json()); }
+    97→    97→    catch (e) { console.error(e); }
+    98→    98→    finally { setLoading(false); }
+    99→    99→  }, []);
+   100→   100→  useEffect(() => { fetch(); }, [fetch]);
+   101→   101→
+   102→   102→  const upload = async (ep: string, file: File) => {
+   103→   103→    setUploading(ep);
+   104→   104→    const fd = new FormData(); fd.append('file', file);
+   105→   105→    try { const r = await fetch(ep, { method: 'POST', body: fd }); if (r.ok) fetch(); }
+   106→   106→    catch (e) { console.error(e); }
+   107→   107→    finally { setUploading(null); setShowUpload(false); }
+   108→   108→  };
+   109→   109→
+   110→   110→  /* ── Derived data ── */
+   111→   111→
+   112→   112→  const filteredRanking = useMemo(() => {
+   113→   113→    if (!data) return [];
+   114→   114→    return data.ranking.filter(e => {
+   115→   115→      const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || String(e.codigoEmp).includes(search);
+   116→   116→      const matchTurno = filterTurno === 'all';
+   117→   117→      return matchSearch && matchTurno;
+   118→   118→    });
+   119→   119→  }, [data, search, filterTurno]);
+   120→   120→
+   121→   121→  const filteredTurnoCards = useMemo(() => {
+   122→   122→    if (!data) return [];
+   123→   123→    return data.rankingPorTurno.filter(tr => tr.empleados.length > 0);
+   124→   124→  }, [data]);
+   125→   125→
+   126→   126→  // Profile
+   127→   127→  const empDays = useMemo(() => {
+   128→   128→    if (!profileEmp || !data) return [];
+   129→   129→    return data.employees
+   130→   130→      .filter(e => e.codigoEmp === profileEmp.codigoEmp)
+   131→   131→      .filter(e => filterDate === 'all' || e.fecha === filterDate)
+   132→   132→      .sort((a, b) => b.fecha.localeCompare(a.fecha));
+   133→   133→  }, [profileEmp, data, filterDate]);
+   134→   134→
+   135→   135→  const profileDay = empDays[profileDateIdx] || null;
+   136→   136→
+   137→   137→  const openProfile = (codigo: number) => {
+   138→   138→    if (!data) return;
+   139→   139→    const emp = data.employees.find(e => e.codigoEmp === codigo);
+   140→   140→    if (emp) { setProfileEmp(emp); setProfileDateIdx(0); }
+   141→   141→  };
+   142→   142→
+   143→   143→  const totalFueraAll = data?.ranking.reduce((s, e) => s + e.totalFueraSegundos, 0) || 0;
+   144→   144→  const maxFuera = data?.ranking[0];
+   145→   145→  const totalEventos = data?.employees.reduce((s, e) => s + e.tiemposFuera.length, 0) || 0;
+   146→   146→
+   147→   147→  return (
+   148→   148→    <div className="min-h-screen bg-white flex flex-col">
+   149→   149→      {/* ═══════════ HEADER ═══════════ */}
+   150→   150→      <header className="border-b border-gray-200 bg-white sticky top-0 z-50">
+   151→   151→        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
+   152→   152→          <h1 className="text-lg font-bold text-gray-800">Tiempos Fuera de Deposito</h1>
+   153→   153→          <div className="flex items-center gap-2">
+   154→   154→            <div className="relative">
+   155→   155→              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+   156→   156→              <Input placeholder="Buscar operador..." value={search} onChange={e => setSearch(e.target.value)}
+   157→   157→                className="pl-8 h-8 w-52 text-sm border-gray-300" />
+   158→   158→            </div>
+   159→   159→            <select value={filterTurno} onChange={e => setFilterTurno(e.target.value)}
+   160→   160→              className="h-8 text-sm border border-gray-300 rounded-md px-2.5 bg-white text-gray-600 focus:outline-none">
+   161→   161→              <option value="all">Turno: Todos</option>
+   162→   162→              {data?.turnos.map(t => <option key={t} value={t}>{t} — {turnoMeta[t]?.label || t}</option>)}
+   163→   163→            </select>
+   164→   164→            <select value={filterDate} onChange={e => setFilterDate(e.target.value)}
+   165→   165→              className="h-8 text-sm border border-gray-300 rounded-md px-2.5 bg-white text-gray-600 focus:outline-none">
+   166→   166→              <option value="all">Fecha: Todas</option>
+   167→   167→              {data?.summary.dates.map(d => <option key={d} value={d}>{d}</option>)}
+   168→   168→            </select>
+   169→   169→            <div className="relative">
+   170→   170→              <Button variant="outline" size="sm" className="h-8 text-sm border-gray-300 text-gray-600"
+   171→   171→                onClick={() => setShowUpload(!showUpload)}>
+   172→   172→                <Upload className="h-3.5 w-3.5 mr-1.5" /> Cargar Excel
+   173→   173→              </Button>
+   174→   174→              {showUpload && (
+   175→   175→                <div className="absolute right-0 top-full mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg p-3 z-50 space-y-2">
+   176→   176→                  {[
+   177→   177→                    { label: 'Accesos', ep: '/api/upload-accesos' },
+   178→   178→                    { label: 'Comidas (TK)', ep: '/api/upload-comidas' },
+   179→   179→                    { label: 'Facial', ep: '/api/upload-facial' },
+   180→   180→                  ].map(({ label, ep }) => (
+   181→   181→                    <label key={ep}
+   182→   182→                      className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer transition-colors hover:bg-gray-50 ${uploading === ep ? 'opacity-50' : ''}`}>
+   183→   183→                      <input type="file" accept=".xlsx,.xls" className="hidden"
+   184→   184→                        onChange={e => { const f = e.target.files?.[0]; if (f) upload(ep, f); e.target.value = ''; }} />
+   185→   185→                      <FileSpreadsheet className="h-4 w-4 text-gray-400" />
+   186→   186→                      <span className="text-gray-700">{label}</span>
+   187→   187→                    </label>
+   188→   188→                  ))}
+   189→   189→                  <p className="text-[10px] text-gray-400 px-1">Se sobreescribe con cada carga</p>
+   190→   190→                </div>
+   191→   191→              )}
+   192→   192→            </div>
+   193→   193→            <Button size="sm" className="h-8 bg-red-500 hover:bg-red-600 text-white text-sm"
+   194→   194→              onClick={fetch} disabled={loading}>
+   195→   195→              <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} /> Actualizar
+   196→   196→            </Button>
+   197→   197→          </div>
+   198→   198→        </div>
+   199→   199→      </header>
+   200→   200→
+   201→   201→      {/* ═══════════ MAIN ═══════════ */}
+   202→   202→      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-5 space-y-4">
+   203→   203→
+   204→   204→        {/* ── Metric Cards ── */}
+   205→   205→        {data && !loading && (
+   206→   206→          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+   207→   207→            <MetricCard
+   208→   208→              icon={<Users className="h-5 w-5 text-blue-500" />}
+   209→   209→              label="Total Empleados" value={String(data.summary.totalEmployees)}
+   210→   210→              accent="border-l-blue-500"
+   211→   211→            />
+   212→   212→            <MetricCard
+   213→   213→              icon={<Clock className="h-5 w-5 text-red-500" />}
+   214→   214→              label="Suma Tiempos Fuera" value={formatHMS(totalFueraAll)}
+   215→   215→              sub={`${totalEventos} eventos`}
+   216→   216→              accent="border-l-red-500"
+   217→   217→              subBg="bg-red-50"
+   218→   218→            />
+   219→   219→            <MetricCard
+   220→   220→              icon={<AlertTriangle className="h-5 w-5 text-amber-500" />}
+   221→   221→              label="Promedio por Empleado" value={data.summary.avgOutsidePerEmployee}
+   222→   222→              accent="border-l-amber-500"
+   223→   223→            />
+   224→   224→            <MetricCard
+   225→   225→              icon={<Clock className="h-5 w-5 text-orange-500" />}
+   226→   226→              label="Mayor Tiempo Fuera"
+   227→   227→              value={maxFuera ? maxFuera.totalFuera : '00:00:00'}
+   228→   228→              sub={maxFuera ? maxFuera.nombre : ''}
+   229→   229→              accent="border-l-orange-500"
+   230→   230→            />
+   231→   231→          </div>
+   232→   232→        )}
+   233→   233→
+   234→   234→        {/* ── Summary bar ── */}
+   235→   235→        {data && !loading && (
+   236→   236→          <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-3 flex items-center gap-6">
+   237→   237→            <div className="flex items-center gap-1.5 text-red-600">
+   238→   238→              <AlertTriangle className="h-4 w-4" />
+   239→   239→              <span className="text-xs font-semibold uppercase tracking-wider">Resumen</span>
+   240→   240→            </div>
+   241→   241→            <span className="text-sm"><b className="text-red-600">{totalEventos}</b> <span className="text-gray-500">salidas</span></span>
+   242→   242→            <span className="text-sm"><b className="text-red-600">{formatHMS(totalFueraAll)}</b> <span className="text-gray-500">suma total</span></span>
+   243→   243→            <span className="text-sm"><b className="text-red-600">{data.summary.totalEmployees}</b> <span className="text-gray-500">empleados</span></span>
+   244→   244→          </div>
+   245→   245→        )}
+   246→   246→
+   247→   247→        {/* ── Loading ── */}
+   248→   248→        {loading && <div className="space-y-3">{[...Array(4)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>}
+   249→   249→
+   250→   250→        {/* ── Empty ── */}
+   251→   251→        {!loading && data && data.employees.length === 0 && (
+   252→   252→          <div className="text-center py-24">
+   253→   253→            <FileSpreadsheet className="h-12 w-12 mx-auto text-gray-200 mb-4" />
+   254→   254→            <p className="text-gray-400 text-sm">Carga los archivos Excel para comenzar</p>
+   255→   255→          </div>
+   256→   256→        )}
+   257→   257→
+   258→   258→        {/* ══════════════════════════════════════════════════
+   259→   259→            TABS: RANKING / POR TURNO
+   260→   260→            ══════════════════════════════════════════════════ */}
+   261→   261→        {data && !loading && data.employees.length > 0 && (
+   262→   262→          <div className="space-y-4">
+   263→   263→            {/* Tab bar */}
+   264→   264→            <div className="flex items-center gap-6 border-b border-gray-200">
+   265→   265→              <button onClick={() => setTab('ranking')}
+   266→   266→                className={`pb-2.5 text-sm font-medium transition-colors ${tab === 'ranking' ? 'text-red-600 border-b-2 border-red-500' : 'text-gray-500 hover:text-gray-700'}`}>
+   267→   267→                Ranking
+   268→   268→              </button>
+   269→   269→              <button onClick={() => setTab('turno')}
+   270→   270→                className={`pb-2.5 text-sm font-medium transition-colors ${tab === 'turno' ? 'text-red-600 border-b-2 border-red-500' : 'text-gray-500 hover:text-gray-700'}`}>
+   271→   271→                Por Turno
+   272→   272→              </button>
+   273→   273→            </div>
+   274→   274→
+   275→   275→            {/* ══════ RANKING TAB ══════ */}
+   276→   276→            {tab === 'ranking' && (
+   277→   277→              <div>
+   278→   278→                <div className="flex items-center justify-between mb-3">
+   279→   279→                  <h2 className="text-sm font-bold text-gray-800">Ranking por Tiempo Fuera de Deposito</h2>
+   280→   280→                  <span className="text-xs text-gray-400">{filteredRanking.length} operadores</span>
+   281→   281→                </div>
+   282→   282→
+   283→   283→                <div className="border border-gray-200 rounded-lg overflow-hidden">
+   284→   284→                  <table className="w-full text-sm">
+   285→   285→                    <thead>
+   286→   286→                      <tr className="bg-gray-50 text-left">
+   287→   287→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
+   288→   288→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+   289→   289→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-20">Turno</th>
+   290→   290→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-32">T. Fuera Deposito</th>
+   291→   291→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Prom/Dia</th>
+   292→   292→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Dias</th>
+   293→   293→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Mayor Dia</th>
+   294→   294→                        <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-16">Eventos</th>
+   295→   295→                      </tr>
+   296→   296→                    </thead>
+   297→   297→                    <tbody className="divide-y divide-gray-100">
+   298→   298→                      {filteredRanking.map((emp, idx) => {
+   299→   299→                        const pos = idx + 1;
+   300→   300→                        const rankBadge = pos <= 3 ? 'bg-red-500' : pos <= 7 ? 'bg-orange-400' : '';
+   301→   301→                        const rowBg = pos <= 3 ? 'bg-red-50/40' : '';
+   302→   302→
+   303→   303→                        // Find the most common turno for this employee
+   304→   304→                        const empTurno = data.employees.find(e => e.codigoEmp === emp.codigoEmp)?.turno || 'OTRO';
+   305→   305→                        const tMeta = turnoMeta[empTurno] || turnoMeta.OTRO;
+   306→   306→                        const TurnoIcon = tMeta.icon;
+   307→   307→
+   308→   308→                        return (
+   309→   309→                          <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-gray-50 cursor-pointer transition-colors`}
+   310→   310→                            onClick={() => openProfile(emp.codigoEmp)}>
+   311→   311→                            <td className="px-3 py-3">
+   312→   312→                              {rankBadge ? (
+   313→   313→                                <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>
+   314→   314→                                  {pos}
+   315→   315→                                </span>
+   316→   316→                              ) : (
+   317→   317→                                <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
+   318→   318→                              )}
+   319→   319→                            </td>
+   320→   320→                            <td className="px-3 py-3">
+   321→   321→                              <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
+   322→   322→                              <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
+   323→   323→                            </td>
+   324→   324→                            <td className="px-3 py-3">
+   325→   325→                              <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
+   326→   326→                                <TurnoIcon className="h-3 w-3" /> {empTurno}
+   327→   327→                              </span>
+   328→   328→                            </td>
+   329→   329→                            <td className="px-3 py-3 text-right">
+   330→   330→                              <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>
+   331→   331→                                {emp.totalFuera}
+   332→   332→                              </span>
+   333→   333→                            </td>
+   334→   334→                            <td className="px-3 py-3 text-right">
+   335→   335→                              <span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span>
+   336→   336→                            </td>
+   337→   337→                            <td className="px-3 py-3 text-right">
+   338→   338→                              <span className="text-gray-600 text-sm">{emp.diasCount}</span>
+   339→   339→                            </td>
+   340→   340→                            <td className="px-3 py-3 text-right">
+   341→   341→                              <span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span>
+   342→   342→                            </td>
+   343→   343→                            <td className="px-3 py-3 text-right">
+   344→   344→                              <span className="text-gray-600 text-sm">{emp.eventosCount}</span>
+   345→   345→                            </td>
+   346→   346→                          </tr>
+   347→   347→                        );
+   348→   348→                      })}
+   349→   349→                    </tbody>
+   350→   350→                  </table>
+   351→   351→                </div>
+   352→   352→              </div>
+   353→   353→            )}
+   354→   354→
+   355→   355→            {/* ══════ POR TURNO TAB ══════ */}
+   356→   356→            {tab === 'turno' && (
+   357→   357→              <div>
+   358→   358→                <h2 className="text-sm font-bold text-gray-800 mb-3">Por Turno</h2>
+   359→   359→                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+   360→   360→                  {filteredTurnoCards.map(tr => {
+   361→   361→                    const tm = turnoMeta[tr.turno] || turnoMeta.OTRO;
+   362→   362→                    const TIcon = tm.icon;
+   363→   363→                    return (
+   364→   364→                      <div key={tr.turno} className={`rounded-xl border ${tm.border} ${tm.bg} p-5 cursor-pointer hover:shadow-md transition-shadow`}
+   365→   365→                        onClick={() => { setFilterTurno(tr.turno); setTab('ranking'); }}>
+   366→   366→                        <div className="flex items-center gap-2 mb-2">
+   367→   367→                          <TIcon className={`h-5 w-5 ${tm.text}`} />
+   368→   368→                          <span className={`text-sm font-bold ${tm.text}`}>{tr.turno}</span>
+   369→   369→                          <span className="text-[10px] text-gray-400">{tm.label}</span>
+   370→   370→                        </div>
+   371→   371→                        <p className={`text-2xl font-black font-mono ${tm.text}`}>{tr.totalFuera}</p>
+   372→   372→                        <p className="text-xs text-gray-500 mt-1">
+   373→   373→                          {tr.eventosCount} eventos &middot; {formatHMS(tr.totalFueraSegundos)}
+   374→   374→                        </p>
+   375→   375→                        <p className="text-[10px] text-gray-400 mt-1">{tr.empleados.length} operadores</p>
+   376→   376→                      </div>
+   377→   377→                    );
+   378→   378→                  })}
+   379→   379→                </div>
+   380→   380→              </div>
+   381→   381→            )}
+   382→   382→          </div>
+   383→   383→        )}
+   384→   384→      </main>
+   385→   385→
+   386→   386→      {/* ═══════════ PROFILE DIALOG ═══════════ */}
+   387→   387→      <Dialog open={profileEmp !== null} onOpenChange={o => { if (!o) setProfileEmp(null); }}>
+   388→   388→        <DialogContent className="sm:max-w-4xl max-h-[90vh] p-0 overflow-hidden flex flex-col">
+   389→   389→          {profileEmp && (
+   390→   390→            <div className="bg-white border-b border-gray-200 px-6 py-4 shrink-0">
+   391→   391→              <div className="flex items-center justify-between">
+   392→   392→                <div>
+   393→   393→                  <DialogTitle className="text-base font-bold text-gray-800">
+   394→   394→                    OPERADOR: {profileEmp.nombre}
+   395→   395→                  </DialogTitle>
+   396→   396→                  <DialogDescription className="text-xs text-gray-400 mt-0.5">
+   397→   397→                    Codigo {profileEmp.codigoEmp} &middot; {profileEmp.empresa} &middot; {profileEmp.sector}
+   398→   398→                  </DialogDescription>
+   399→   399→                </div>
+   400→   400→                <div className="flex items-center gap-3">
+   401→   401→                  <span className="text-xs text-gray-400">
+   402→   402→                    {empDays.reduce((s, d) => s + d.tiemposFuera.length, 0)} salidas
+   403→   403→                  </span>
+   404→   404→                  <span className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full ${
+   405→   405→                    (turnoMeta[profileEmp.turno] || turnoMeta.OTRO).bg
+   406→   406→                  } ${(turnoMeta[profileEmp.turno] || turnoMeta.OTRO).text}`}>
+   407→   407→                    {(() => { const TIcon = (turnoMeta[profileEmp.turno] || turnoMeta.OTRO).icon; return <TIcon className="h-3 w-3" />; })()}
+   408→   408→                    {profileEmp.turno}
+   409→   409→                  </span>
+   410→   410→                </div>
+   411→   411→              </div>
+   412→   412→
+   413→   413→              {/* Date tabs */}
+   414→   414→              <div className="flex gap-1 mt-3 overflow-x-auto pb-1">
+   415→   415→                {empDays.map((d, i) => (
+   416→   416→                  <button key={d.fecha} onClick={() => setProfileDateIdx(i)}
+   417→   417→                    className={`px-3 py-1.5 rounded text-xs font-medium whitespace-nowrap transition-colors ${profileDateIdx === i
+   418→   418→                      ? 'bg-red-500 text-white'
+   419→   419→                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+   420→   420→                    }`}>
+   421→   421→                    {d.fecha}
+   422→   422→                    {d.totalFueraSegundos > 0 && <span className="ml-1 opacity-70">({d.totalFuera})</span>}
+   423→   423→                  </button>
+   424→   424→                ))}
+   425→   425→              </div>
+   426→   426→            </div>
+   427→   427→          )}
+   428→   428→
+   429→   429→          {profileDay && (
+   430→   430→            <ScrollArea className="flex-1">
+   431→   431→              <div className="p-6 space-y-5">
+   432→   432→                {/* Day summary */}
+   433→   433→                <div className="grid grid-cols-3 gap-3">
+   434→   434→                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+   435→   435→                    <p className="text-[10px] text-gray-400 uppercase">Jornada</p>
+   436→   436→                    <p className="text-sm font-semibold text-gray-700 mt-0.5">{profileDay.jornada || '—'}</p>
+   437→   437→                  </div>
+   438→   438→                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+   439→   439→                    <p className="text-[10px] text-gray-400 uppercase">Total Fuera</p>
+   440→   440→                    <p className={`text-sm font-bold font-mono mt-0.5 ${durTextColor(profileDay.totalFueraSegundos)}`}>
+   441→   441→                      {profileDay.totalFuera}
+   442→   442→                    </p>
+   443→   443→                  </div>
+   444→   444→                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+   445→   445→                    <p className="text-[10px] text-gray-400 uppercase">Salidas</p>
+   446→   446→                    <p className="text-sm font-bold text-gray-700 mt-0.5">{profileDay.tiemposFuera.length}</p>
+   447→   447→                  </div>
+   448→   448→                </div>
+   449→   449→
+   450→   450→                {/* Times table */}
+   451→   451→                <div>
+   452→   452→                  <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Tiempos Fuera de Deposito</h3>
+   453→   453→                  {profileDay.tiemposFuera.length === 0 ? (
+   454→   454→                    <p className="text-sm text-gray-300 italic">Sin salidas registradas</p>
+   455→   455→                  ) : (
+   456→   456→                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+   457→   457→                      <table className="w-full text-sm">
+   458→   458→                        <thead>
+   459→   459→                          <tr className="bg-gray-50">
+   460→   460→                            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-left w-10">#</th>
+   461→   461→                            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-center">Salida</th>
+   462→   462→                            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-center">Entrada</th>
+   463→   463→                            <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-right">Duracion</th>
+   464→   464→                          </tr>
+   465→   465→                        </thead>
+   466→   466→                        <tbody className="divide-y divide-gray-100">
+   467→   467→                          {profileDay.tiemposFuera.map((t, i) => (
+   468→   468→                            <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
+   469→   469→                              <td className="px-3 py-2">
+   470→   470→                                <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-red-500 text-white text-[10px] font-bold">
+   471→   471→                                  {i + 1}
+   472→   472→                                </span>
+   473→   473→                              </td>
+   474→   474→                              <td className="px-3 py-2 text-center">
+   475→   475→                                <span className="font-mono text-xs text-red-500 font-medium">{t.salida}</span>
+   476→   476→                              </td>
+   477→   477→                              <td className="px-3 py-2 text-center">
+   478→   478→                                <span className="font-mono text-xs text-emerald-600 font-medium">{t.entrada}</span>
+   479→   479→                              </td>
+   480→   480→                              <td className="px-3 py-2 text-right">
+   481→   481→                                <span className={`inline-block px-2 py-0.5 rounded font-mono text-xs font-bold ${durTextColor(t.duracionSegundos)}`}>
+   482→   482→                                  {t.duracion}
+   483→   483→                                </span>
+   484→   484→                              </td>
+   485→   485→                            </tr>
+   486→   486→                          ))}
+   487→   487→                          {profileDay.tiemposFuera.length > 1 && (
+   488→   488→                            <tr className="bg-red-50">
+   489→   489→                              <td colSpan={3} className="px-3 py-2 text-xs font-semibold text-red-700">Total</td>
+   490→   490→                              <td className="px-3 py-2 text-right">
+   491→   491→                                <span className="font-mono text-xs font-black text-red-600">{profileDay.totalFuera}</span>
+   492→   492→                              </td>
+   493→   493→                            </tr>
+   494→   494→                          )}
+   495→   495→                        </tbody>
+   496→   496→                      </table>
+   497→   497→                    </div>
+   498→   498→                  )}
+   499→   499→                </div>
+   500→   500→
+   501→   501→                {/* Timeline */}
+   502→   502→                <div>
+   503→   503→                  <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Linea de Tiempo</h3>
+   504→   504→                  <Timeline day={profileDay} />
+   505→   505→                </div>
+   506→   506→
+   507→   507→                {/* Comidas */}
+   508→   508→                {profileDay.comidasHoras.length > 0 && (
+   509→   509→                  <div>
+   510→   510→                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">TK Comida</h3>
+   511→   511→                    <div className="flex flex-wrap gap-1.5">
+   512→   512→                      {profileDay.comidasHoras.map((h, i) => (
+   513→   513→                        <span key={i} className="inline-flex items-center gap-1 text-xs bg-orange-50 text-orange-600 px-2.5 py-1 rounded-full border border-orange-200">
+   514→   514→                          <UtensilsCrossed className="h-3 w-3" /> {h}
+   515→   515→                        </span>
+   516→   516→                      ))}
+   517→   517→                    </div>
+   518→   518→                  </div>
+   519→   519→                )}
+   520→   520→
+   521→   521→                {/* Facial */}
+   522→   522→                {profileDay.facialRegistros.length > 0 && (
+   523→   523→                  <div>
+   524→   524→                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Registros Faciales</h3>
+   525→   525→                    <div className="flex flex-wrap gap-1.5">
+   526→   526→                      {profileDay.facialRegistros.map((f, i) => (
+   527→   527→                        <span key={i} className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border ${
+   528→   528→                          f.zona.toLowerCase().includes('entrada')
+   529→   529→                            ? 'bg-blue-50 text-blue-600 border-blue-200'
+   530→   530→                            : 'bg-purple-50 text-purple-600 border-purple-200'
+   531→   531→                        }`}>
+   532→   532→                          <ScanFace className="h-3 w-3" /> {f.hora} — {f.zona}
+   533→   533→                        </span>
+   534→   534→                      ))}
+   535→   535→                    </div>
+   536→   536→                  </div>
+   537→   537→                )}
+   538→   538→              </div>
+   539→   539→            </ScrollArea>
+   540→   540→          )}
+   541→   541→        </DialogContent>
+   542→   542→      </Dialog>
+   543→   543→    </div>
+   544→   544→  );
+   545→   545→}
+   546→   546→
+   547→   547→/* ═══════════════════════════════════════
+   548→   548→   SUB-COMPONENTS
+   549→   549→   ═══════════════════════════════════════ */
+   550→   550→
+   551→   551→function MetricCard({ icon, label, value, sub, accent, subBg }: {
+   552→   552→  icon: React.ReactNode; label: string; value: string;
+   553→   553→  sub?: string; accent: string; subBg?: string;
+   554→   554→}) {
+   555→   555→  return (
+   556→   556→    <div className={`bg-white border border-gray-200 rounded-lg p-4 border-l-4 ${accent}`}>
+   557→   557→      <div className="flex items-center justify-between mb-1">
+   558→   558→        <span className="text-xs text-gray-500 font-medium">{label}</span>
+   559→   559→        {icon}
+   560→   560→      </div>
+   561→   561→      <p className="text-xl font-black text-gray-800">{value}</p>
+   562→   562→      {sub && (
+   563→   563→        <p className={`text-[11px] mt-1 ${subBg || ''} px-1.5 py-0.5 rounded inline-block ${subBg ? 'text-gray-500' : 'text-gray-400'}`}>
+   564→   564→          {sub}
+   565→   565→        </p>
+   566→   566→      )}
+   567→   567→    </div>
+   568→   568→  );
+   569→   569→}
+   570→   570→
+   571→   571→function Timeline({ day }: { day: EmployeeDay }) {
+   572→   572→  const events = useMemo(() => {
+   573→   573→    const list: { hora: string; seg: number; tipo: 'entrada' | 'salida' | 'facial' | 'comida'; label: string }[] = [];
+   574→   574→    for (const ev of day.accesosEventos) {
+   575→   575→      const seg = timeToS(ev.hora);
+   576→   576→      if (ev.terminal === 'Entrada Depo') list.push({ hora: ev.hora, seg, tipo: 'entrada', label: 'Entrada Depo' });
+   577→   577→      else if (ev.terminal === 'Salida Depo') list.push({ hora: ev.hora, seg, tipo: 'salida', label: 'Salida Depo' });
+   578→   578→    }
+   579→   579→    for (const f of day.facialRegistros) list.push({ hora: f.hora, seg: timeToS(f.hora), tipo: 'facial', label: f.zona || 'Facial' });
+   580→   580→    for (const h of day.comidasHoras) list.push({ hora: h, seg: timeToS(h), tipo: 'comida', label: 'TK Comida' });
+   581→   581→    return list.sort((a, b) => a.seg - b.seg);
+   582→   582→  }, [day]);
+   583→   583→
+   584→   584→  if (events.length === 0) return <p className="text-xs text-gray-300 italic py-2">Sin eventos</p>;
+   585→   585→
+   586→   586→  const minSeg = Math.max(0, Math.floor(events[0].seg / 3600) * 3600 - 3600);
+   587→   587→  const maxSeg = Math.min(86400, Math.ceil(events[events.length - 1].seg / 3600) * 3600 + 3600);
+   588→   588→  const range = maxSeg - minSeg || 1;
+   589→   589→  const pct = (seg: number) => ((seg - minSeg) / range) * 100;
+   590→   590→
+   591→   591→  const bands = day.tiemposFuera.map(t => ({
+   592→   592→    left: pct(timeToS(t.salida)),
+   593→   593→    width: Math.min(((timeToS(t.entrada) - timeToS(t.salida) + (timeToS(t.entrada) < timeToS(t.salida) ? 86400 : 0)) / range) * 100, 100),
+   594→   594→  }));
+   595→   595→
+   596→   596→  const styles: Record<string, { bg: string }> = {
+   597→   597→    entrada: { bg: 'bg-emerald-500' },
+   598→   598→    salida: { bg: 'bg-red-500' },
+   599→   599→    facial: { bg: 'bg-blue-500' },
+   600→   600→    comida: { bg: 'bg-orange-500' },
+   601→   601→  };
+   602→   602→
+   603→   603→  return (
+   604→   604→    <div className="space-y-1.5">
+   605→   605→      <div className="relative h-10 bg-gray-100 rounded-lg border border-gray-200">
+   606→   606→        {bands.map((b, i) => (
+   607→   607→          <div key={i} className="absolute top-0 bottom-0 bg-red-100/70 rounded" style={{ left: `${b.left}%`, width: `${b.width}%` }} />
+   608→   608→        ))}
+   609→   609→        {events.map((ev, i) => (
+   610→   610→          <div key={i} className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 group" style={{ left: `${pct(ev.seg)}%` }}>
+   611→   611→            <div className={`w-5 h-5 ${styles[ev.tipo]?.bg || 'bg-gray-400'} rounded-full flex items-center justify-center text-white shadow-sm hover:scale-125 transition-transform cursor-default`}>
+   612→   612→              {ev.tipo === 'entrada' && <ArrowDownToLine className="h-2.5 w-2.5" />}
+   613→   613→              {ev.tipo === 'salida' && <ArrowUpFromLine className="h-2.5 w-2.5" />}
+   614→   614→              {ev.tipo === 'facial' && <ScanFace className="h-2.5 w-2.5" />}
+   615→   615→              {ev.tipo === 'comida' && <UtensilsCrossed className="h-2.5 w-2.5" />}
+   616→   616→            </div>
+   617→   617→            <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 whitespace-nowrap px-1.5 py-0.5 rounded text-[9px] bg-gray-900 text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+   618→   618→              {ev.hora} — {ev.label}
+   619→   619→            </div>
+   620→   620→          </div>
+   621→   621→        ))}
+   622→   622→      </div>
+   623→   623→      <div className="flex gap-3 text-[10px] text-gray-400">
+   624→   624→        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Entrada</span>
+   625→   625→        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" /> Salida</span>
+   626→   626→        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" /> Facial</span>
+   627→   627→        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500" /> TK</span>
+   628→   628→        <span className="flex items-center gap-1"><span className="w-2 h-1 rounded bg-red-200 border border-red-300" /> Fuera</span>
+   629→   629→      </div>
+   630→   630→    </div>
+   631→   631→  );
+   632→   632→}

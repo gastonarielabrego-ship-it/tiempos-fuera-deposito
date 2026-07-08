@@ -205,7 +205,11 @@ export default function Home() {
       if (r.ok) {
         const json = await r.json().catch(() => null);
         if (json?.count === 0 && json?.debug) {
-          showToast(`${label}: 0 registros. Columnas: ${json.debug.columns?.join(', ')}`, 'error');
+          const dbg = json.debug;
+          const mapped = dbg.mapped ? `Mapeo: código=${dbg.mapped.codigo ?? '❌'}, nombre=${dbg.mapped.nombre ?? '❌'}, fecha=${dbg.mapped.fecha ?? '❌'}, hora=${dbg.mapped.hora ?? '❌'}` : '';
+          showToast(`${label}: 0 registros. ${dbg.message ?? ''} ${mapped}`, 'error');
+        } else if (json?.count === 0) {
+          showToast(`${label}: 0 registros procesados de ${json?.total ?? '?'} filas`, 'error');
         } else {
           showToast(`${label}: ${json?.count ?? 0} registros cargados`, 'success');
         }

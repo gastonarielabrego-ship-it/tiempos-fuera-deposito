@@ -1,0 +1,1818 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+     4→import { Button } from '@/components/ui/button';
+     5→import { Input } from '@/components/ui/input';
+     6→import { Skeleton } from '@/components/ui/skeleton';
+     7→
+     8→import {
+     9→  Upload, RefreshCw, Clock, Users,
+    10→  FileSpreadsheet, Search, Sun, Sunset, Moon,
+    11→  AlertTriangle, CheckCircle2, XCircle, Coffee,
+    12→  FileText, Printer, Trash2, Copy,
+    13→} from 'lucide-react';
+    14→
+    15→/* ═══════════════════════════════════════
+    16→   TYPES
+    17→   ═══════════════════════════════════════ */
+    18→
+    19→interface TimeOutPair { salida: string; entrada: string; duracionSegundos: number; duracion: string; }
+    20→interface AccesoEvento { hora: string; terminal: string; }
+    21→
+    22→interface EmployeeDay {
+    23→  codigoEmp: number; nombre: string; fecha: string; jornada: string; sector: string; empresa: string;
+    24→  turno: string; tiemposFuera: TimeOutPair[]; totalFueraSegundos: number; totalFuera: string;
+    25→  comidasHoras: string[]; facialRegistros: { hora: string; zona: string }[];
+    26→  accesosEventos: AccesoEvento[];
+    27→}
+    28→
+    29→interface RankingEntry {
+    30→  codigoEmp: number; nombre: string; empresa: string; sector: string;
+    31→  totalFueraSegundos: number; totalFuera: string;
+    32→  diasCount: number; avgPorDia: string; maxDiaFuera: string; maxDiaFecha: string;
+    33→  eventosCount: number;
+    34→}
+    35→
+    36→interface TurnoRanking { turno: string; label: string; totalFueraSegundos: number; totalFuera: string; eventosCount: number; empleados: RankingEntry[]; }
+    37→
+    38→interface Summary {
+    39→  totalEmployees: number; totalRecords: number; totalComidas: number;
+    40→  totalFacial: number; avgOutsidePerEmployee: string; dates: string[];
+    41→}
+    42→
+    43→interface DashboardData {
+    44→  employees: EmployeeDay[]; ranking: RankingEntry[];
+    45→  rankingPorTurno: TurnoRanking[]; turnos: string[]; summary: Summary;
+    46→}
+    47→
+    48→interface Sancion {
+    49→  id: string; codigoEmp: number; nombre: string; empresa: string; sector: string;
+    50→  jornada: string; fecha: string; salida: string; entrada: string;
+    51→  duracion: string; duracionSegundos: number; tipo: string; tipoLabel: string;
+    52→  createdAt: string;
+    53→}
+    54→interface SancionStat {
+    55→  codigoEmp: number; nombre: string; empresa: string;
+    56→  totalSanciones: number; ultimaSancion: string;
+    57→}
+    58→interface IndicadorDiario {
+    59→  id: string; fecha: string;
+    60→  totalOperadores: number; totalConIncidencia: number; totalRegistros: number;
+    61→  totalSalidas: number; totalFueraSegundos: number; promedioFueraSegundos: number;
+    62→  tmOperadores: number; tmConIncidencia: number; tmSalidas: number; tmFueraSegundos: number;
+    63→  ttOperadores: number; ttConIncidencia: number; ttSalidas: number; ttFueraSegundos: number;
+    64→  tnOperadores: number; tnConIncidencia: number; tnSalidas: number; tnFueraSegundos: number;
+    65→  sancionados: number; createdAt: string;
+    66→}
+    67→
+    68→/* ═══════════════════════════════════════
+    69→   HELPERS
+    70→   ═══════════════════════════════════════ */
+    71→
+    72→const timeToS = (t: string) => {
+    73→  if (!t) return 0;
+    74→  const p = t.split(':');
+    75→  return (Number(p[0]) || 0) * 3600 + (Number(p[1]) || 0) * 60 + (Number(p[2]) || 0);
+    76→};
+    77→
+    78→const formatHMS = (s: number) => {
+    79→  const h = Math.floor(s / 3600);
+    80→  const m = Math.floor((s % 3600) / 60);
+    81→  const sec = s % 60;
+    82→  return `${h}h ${m}m ${sec}s`;
+    83→};
+    84→const formatHM = (s: number) => {
+    85→  const h = Math.floor(s / 3600);
+    86→  const m = Math.floor((s % 3600) / 60);
+    87→  const sec = s % 60;
+    88→  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+    89→};
+    90→
+    91→const durTextColor = (s: number) => s <= 1800 ? 'text-emerald-600' : s <= 3600 ? 'text-amber-600' : 'text-red-600';
+    92→
+    93→const turnoMeta: Record<string, { label: string; icon: typeof Sun; bg: string; text: string; border: string }> = {
+    94→  TM: { label: 'Mañana', icon: Sun, bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+    95→  TT: { label: 'Tarde', icon: Sunset, bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200' },
+    96→  TN: { label: 'Noche', icon: Moon, bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+    97→};
+    98→
+    99→const DEFAULT_TURNO_META = { label: '—', icon: Clock, bg: 'bg-gray-50', text: 'text-gray-400', border: 'border-gray-200' };
+   100→
+   101→const EMPRESAS_EXCLUIDAS = ['GESTION EE-EXTERNO', 'GESTION EE-EXTERNO(SELECCION)', 'G.L.D. GREMIAL EE'];
+   102→// Keywords for flexible matching - if empresa contains ANY of these, it gets excluded
+   103→const EMPRESAS_KEYWORDS = ['GREMIAL', 'EE-EXTERNO'];
+   104→const isEmpresaExcluida = (empresa: string) => {
+   105→  const upper = empresa.toUpperCase().trim();
+   106→  // Direct match first
+   107→  if (EMPRESAS_EXCLUIDAS.some(ex => upper.includes(ex.toUpperCase()))) return true;
+   108→  // Keyword fallback
+   109→  return EMPRESAS_KEYWORDS.some(kw => upper.includes(kw));
+   110→};
+   111→
+   112→/* ═══════════════════════════════════════
+   113→   TOAST NOTIFICATION
+   114→   ═══════════════════════════════════════ */
+   115→
+   116→function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
+   117→  useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
+   118→  const Icon = type === 'success' ? CheckCircle2 : XCircle;
+   119→  const bg = type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700';
+   120→  return (
+   121→    <div className={`fixed bottom-4 right-4 z-[100] flex items-center gap-2 px-4 py-3 rounded-lg border shadow-lg text-sm font-medium animate-in slide-in-from-bottom-2 ${bg}`}>
+   122→      <Icon className="h-4 w-4 shrink-0" />
+   123→      <span>{message}</span>
+   124→      <button onClick={onClose} className="ml-2 opacity-50 hover:opacity-100"><XCircle className="h-3.5 w-3.5" /></button>
+   125→    </div>
+   126→  );
+   127→}
+   128→
+   129→/* ═══════════════════════════════════════
+   130→   MAIN PAGE
+   131→   ═══════════════════════════════════════ */
+   132→
+   133→export default function Home() {
+   134→  const [data, setData] = useState<DashboardData | null>(null);
+   135→  const [loading, setLoading] = useState(true);
+   136→  const [error, setError] = useState<string | null>(null);
+   137→  const [uploading, setUploading] = useState<string | null>(null);
+   138→  const [search, setSearch] = useState('');
+   139→  const [filterTurno, setFilterTurno] = useState('all');
+   140→  const [activeTab, setActiveTab] = useState<'ranking' | 'doble-entrada' | 'extt' | 'indicador' | 'desayuno' | 'break-tarde' | 'break-noche' | 'sanciones'>('ranking');
+   141→  const [showUpload, setShowUpload] = useState(false);
+   142→
+   143→  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+   144→  const fileInputsRef = useRef<Record<string, HTMLInputElement | null>>({});
+   145→
+   146→  const [fechaFilter, setFechaFilter] = useState('');
+   147→  const [sanciones, setSanciones] = useState<Sancion[]>([]);
+   148→  const [sancionStats, setSancionStats] = useState<SancionStat[]>([]);
+   149→  const [rankingSubTab, setRankingSubTab] = useState<'tiempo' | 'salidas'>('tiempo');
+   150→  const [indicadores, setIndicadores] = useState<IndicadorDiario[]>([]);
+   151→
+   152→  const showToast = useCallback((message: string, type: 'success' | 'error') => {
+   153→    setToast({ message, type });
+   154→  }, []);
+   155→
+   156→  const fetchIndicadores = useCallback(async () => {
+   157→    try {
+   158→      const r = await window.fetch('/api/indicador');
+   159→      if (r.ok) setIndicadores(await r.json());
+   160→    } catch { /* ignore */ }
+   161→  }, []);
+   162→
+   163→  const fetchSanciones = useCallback(async () => {
+   164→    try {
+   165→      const r = await window.fetch('/api/sanciones');
+   166→      if (r.ok) {
+   167→        const json = await r.json();
+   168→        setSanciones(json.sanciones || []);
+   169→        setSancionStats(json.stats || []);
+   170→      }
+   171→    } catch { /* silent */ }
+   172→  }, []);
+   173→
+   174→  const fetchData = useCallback(async () => {
+   175→    setLoading(true);
+   176→    setError(null);
+   177→    try {
+   178→      const r = await window.fetch('/api/dashboard');
+   179→      if (r.ok) {
+   180→        const json = await r.json();
+   181→        setData(json);
+   182→        if (json.error) setError(json.error);
+   183→        else await fetchSanciones();
+   184→      } else {
+   185→        const text = await r.text().catch(() => 'Error desconocido');
+   186→        setError(`Error del servidor (${r.status}): ${text}`);
+   187→      }
+   188→    } catch (e) {
+   189→      const msg = e instanceof Error ? e.message : 'Error de conexión';
+   190→      setError(msg);
+   191→    } finally {
+   192→      setLoading(false);
+   193→    }
+   194→  }, [fetchSanciones]);
+   195→
+   196→  useEffect(() => { fetchData(); fetchIndicadores(); }, [fetchData, fetchIndicadores]);
+   197→
+   198→  const upload = async (ep: string, label: string, file: File) => {
+   199→    setUploading(ep);
+   200→    setShowUpload(false);
+   201→    try {
+   202→      const fd = new FormData();
+   203→      fd.append('file', file);
+   204→      const r = await window.fetch(ep, { method: 'POST', body: fd });
+   205→      if (r.ok) {
+   206→        const json = await r.json().catch(() => null);
+   207→        if (json?.count === 0 && json?.debug) {
+   208→          showToast(`${label}: 0 registros. Columnas: ${json.debug.columns?.join(', ')}`, 'error');
+   209→        } else {
+   210→          showToast(`${label}: ${json?.count ?? 0} registros cargados`, 'success');
+   211→        }
+   212→        await fetchData();
+   213→      } else {
+   214→        const text = await r.text().catch(() => 'Error desconocido');
+   215→        showToast(`${label}: ${text}`, 'error');
+   216→      }
+   217→    } catch (e) {
+   218→      showToast(`${label}: Error de conexión`, 'error');
+   219→    } finally {
+   220→      setUploading(null);
+   221→    }
+   222→  };
+   223→
+   224→  const triggerFileInput = (ep: string) => {
+   225→    fileInputsRef.current[ep]?.click();
+   226→  };
+   227→
+   228→  /* ── Derived data ── */
+   229→
+   230→  // Filter employees by fechaFilter
+   231→  const filteredEmployees = useMemo(() => {
+   232→    if (!data) return [];
+   233→    const base = fechaFilter ? data.employees.filter(e => e.fecha === fechaFilter) : data.employees;
+   234→    return base.filter(e => !isEmpresaExcluida(e.empresa));
+   235→  }, [data, fechaFilter]);
+   236→
+   237→  // Build map: codigoEmp -> primary turno (most frequent turno across all their days)
+   238→  const empTurnoMap = useMemo(() => {
+   239→    if (!data) return new Map<number, string>();
+   240→    const map = new Map<number, Map<string, number>>();
+   241→    for (const ed of filteredEmployees) {
+   242→      if (!map.has(ed.codigoEmp)) map.set(ed.codigoEmp, new Map());
+   243→      const turnoCounts = map.get(ed.codigoEmp)!;
+   244→      turnoCounts.set(ed.turno, (turnoCounts.get(ed.turno) || 0) + 1);
+   245→    }
+   246→    const result = new Map<number, string>();
+   247→    for (const [codigo, turnoCounts] of map) {
+   248→      let best = 'OTRO', bestCount = 0;
+   249→      for (const [t, c] of turnoCounts) { if (c > bestCount) { best = t; bestCount = c; } }
+   250→      result.set(codigo, best);
+   251→    }
+   252→    return result;
+   253→  }, [data]);
+   254→
+   255→  const openProfile = (codigo: number) => {
+   256→    window.location.href = `/operator/${codigo}`;
+   257→  };
+   258→
+   259→  /* ── Generic Exceso builder ── */
+   260→  interface ExcesoEntry {
+   261→    codigoEmp: number; nombre: string; empresa: string; sector: string;
+   262→    totalFueraSegundos: number; dias: Set<string>; eventos: { fecha: string; salida: string; entrada: string; duracion: string; duracionSegundos: number }[];
+   263→  }
+   264→
+   265→  const buildExcesoRanking = useCallback((salidaMinSeg: number, salidaMaxSeg: number, minDurSeg: number): ExcesoEntry[] => {
+   266→    if (!data) return [];
+   267→    const map = new Map<number, ExcesoEntry>();
+   268→    for (const emp of filteredEmployees) {
+   269→      for (const tf of emp.tiemposFuera) {
+   270→        const salidaSeg = timeToS(tf.salida);
+   271→        const inWindow = salidaSeg >= salidaMinSeg && salidaSeg <= salidaMaxSeg;
+   272→        const isExcess = tf.duracionSegundos > minDurSeg;
+   273→        if (inWindow && isExcess) {
+   274→          if (!map.has(emp.codigoEmp)) {
+   275→            map.set(emp.codigoEmp, { codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector, totalFueraSegundos: 0, dias: new Set(), eventos: [] });
+   276→          }
+   277→          const entry = map.get(emp.codigoEmp)!;
+   278→          entry.totalFueraSegundos += tf.duracionSegundos;
+   279→          entry.dias.add(emp.fecha);
+   280→          entry.eventos.push({ fecha: emp.fecha, salida: tf.salida, entrada: tf.entrada, duracion: tf.duracion, duracionSegundos: tf.duracionSegundos });
+   281→        }
+   282→      }
+   283→    }
+   284→    return Array.from(map.values()).sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos);
+   285→  }, [data]);
+   286→
+   287→  /* ── Exceso Desayuno: 06:45–09:45, >25min ── */
+   288→  const desayunoRanking = useMemo(() => buildExcesoRanking(6*3600+45*60, 9*3600+45*60, 25*60), [buildExcesoRanking]);
+   289→  /* ── Exceso Break Tarde: 16:30–17:30, >15min ── */
+   290→  const breakTardeRanking = useMemo(() => buildExcesoRanking(16*3600+30*60, 17*3600+30*60, 15*60), [buildExcesoRanking]);
+   291→  /* ── Exceso Break Noche: 02:40–03:30, >15min ── */
+   292→  const breakNocheRanking = useMemo(() => buildExcesoRanking(2*3600+40*60, 3*3600+30*60, 15*60), [buildExcesoRanking]);
+   293→
+   294→  const filterExceso = (list: ExcesoEntry[]) => list.filter(e => {
+   295→    const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || String(e.codigoEmp).includes(search);
+   296→    return matchSearch;
+   297→  });
+   298→  const desayunoFiltered = useMemo(() => filterExceso(desayunoRanking), [desayunoRanking, search]);
+   299→  const breakTardeFiltered = useMemo(() => filterExceso(breakTardeRanking), [breakTardeRanking, search]);
+   300→  const breakNocheFiltered = useMemo(() => filterExceso(breakNocheRanking), [breakNocheRanking, search]);
+   301→
+   302→  const excesoStats = (list: ExcesoEntry[]) => ({
+   303→    totalEventos: list.reduce((s, e) => s + e.eventos.length, 0),
+   304→    totalSegundos: list.reduce((s, e) => s + e.totalFueraSegundos, 0),
+   305→    empleadosUnicos: list.length,
+   306→  });
+   307→  const desayunoStats = useMemo(() => excesoStats(desayunoFiltered), [desayunoFiltered]);
+   308→  const breakTardeStats = useMemo(() => excesoStats(breakTardeFiltered), [breakTardeFiltered]);
+   309→  const breakNocheStats = useMemo(() => excesoStats(breakNocheFiltered), [breakNocheFiltered]);
+   310→
+   311→  // Recompute ranking from filtered employees when date filter is active
+   312→  const activeRanking = useMemo(() => {
+   313→    if (!fechaFilter || !data) return data?.ranking || [];
+   314→    const rMap = new Map<number, RankingEntry>();
+   315→    for (const emp of filteredEmployees) {
+   316→      if (!rMap.has(emp.codigoEmp)) {
+   317→        rMap.set(emp.codigoEmp, { codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector, totalFueraSegundos: 0, diasCount: 0, avgPorDia: '00:00:00', maxDiaFuera: '00:00:00', maxDiaFecha: '', eventosCount: 0 });
+   318→      }
+   319→      const r = rMap.get(emp.codigoEmp)!;
+   320→      r.totalFueraSegundos += emp.totalFueraSegundos;
+   321→      r.eventosCount += emp.tiemposFuera.length;
+   322→    }
+   323→    // Finalize: set diasCount, avg, max
+   324→    for (const r of rMap.values()) {
+   325→      const empDays = filteredEmployees.filter(e => e.codigoEmp === r.codigoEmp);
+   326→      r.diasCount = empDays.length;
+   327→      const diasConFuera = empDays.filter(e => e.totalFueraSegundos > 0);
+   328→      r.avgPorDia = diasConFuera.length > 0 ? formatHMS(Math.round(r.totalFueraSegundos / diasConFuera.length)) : '00:00:00';
+   329→      const maxDay = empDays.reduce((max, d) => d.totalFueraSegundos > max.totalFueraSegundos ? d : max, empDays[0]);
+   330→      if (maxDay) { r.maxDiaFuera = maxDay.totalFuera; r.maxDiaFecha = maxDay.fecha; }
+   331→    }
+   332→    return Array.from(rMap.values()).sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos);
+   333→  }, [data, filteredEmployees, fechaFilter]);
+   334→
+   335→  // Recompute turno cards from filtered employees when date filter is active
+   336→  const activeTurnoCards = useMemo(() => {
+   337→    if (!fechaFilter) return data?.rankingPorTurno || [];
+   338→    return data?.rankingPorTurno.map(tr => ({
+   339→      ...tr,
+   340→      empleados: tr.empleados.filter(e => filteredEmployees.some(fe => fe.codigoEmp === e.codigoEmp && fe.fecha === fechaFilter)),
+   341→      totalFueraSegundos: tr.empleados.filter(e => filteredEmployees.some(fe => fe.codigoEmp === e.codigoEmp && fe.fecha === fechaFilter)).reduce((s, e) => s + e.totalFueraSegundos, 0),
+   342→      totalFuera: formatHMS(tr.empleados.filter(e => filteredEmployees.some(fe => fe.codigoEmp === e.codigoEmp && fe.fecha === fechaFilter)).reduce((s, e) => s + e.totalFueraSegundos, 0)),
+   343→      eventosCount: tr.empleados.filter(e => filteredEmployees.some(fe => fe.codigoEmp === e.codigoEmp && fe.fecha === fechaFilter)).reduce((s, e) => s + e.eventosCount, 0),
+   344→    })) || [];
+   345→  }, [data, filteredEmployees, fechaFilter]);
+   346→
+   347→
+   348→  const filteredRanking = useMemo(() => {
+   349→    if (!data) return [];
+   350→    return activeRanking.filter(e => {
+   351→      if (isEmpresaExcluida(e.empresa)) return false;
+   352→      const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || String(e.codigoEmp).includes(search);
+   353→      const empTurno = empTurnoMap.get(e.codigoEmp) || 'OTRO';
+   354→      const matchTurno = filterTurno === 'all' || empTurno === filterTurno;
+   355→      return matchSearch && matchTurno;
+   356→    });
+   357→  }, [data, search, filterTurno, empTurnoMap, activeRanking]);
+   358→
+   359→  const rankingByTime = useMemo(() =>
+   360→    [...filteredRanking].sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos),
+   361→    [filteredRanking]);
+   362→
+   363→  const rankingByExits = useMemo(() =>
+   364→    [...filteredRanking].sort((a, b) => b.eventosCount - a.eventosCount || b.totalFueraSegundos - a.totalFueraSegundos),
+   365→    [filteredRanking]);
+   366→
+   367→  const filteredTurnoCards = useMemo(() => {
+   368→    if (!data) return [];
+   369→    return activeTurnoCards.filter(tr => tr.empleados.length > 0);
+   370→  }, [data, activeTurnoCards]);
+   371→
+   372→  // ── Doble Entrada: consecutive Entrada Depo without Salida in between ──
+   373→  const dobleEntrada = useMemo(() => {
+   374→    if (!data) return [] as { codigoEmp: number; nombre: string; empresa: string; fecha: string; hora1: string; hora2: string; turno: string }[];
+   375→    const results: { codigoEmp: number; nombre: string; empresa: string; fecha: string; hora1: string; hora2: string; turno: string }[] = [];
+   376→    for (const emp of filteredEmployees) {
+   377→      if (isEmpresaExcluida(emp.empresa)) continue;
+   378→      const eventos = emp.accesosEventos;
+   379→      for (let i = 0; i < eventos.length - 1; i++) {
+   380→        const curr = eventos[i];
+   381→        const next = eventos[i + 1];
+   382→        if (curr.terminal === 'Entrada Depo' && next.terminal === 'Entrada Depo') {
+   383→          results.push({
+   384→            codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa,
+   385→            fecha: emp.fecha, hora1: curr.hora, hora2: next.hora, turno: emp.turno,
+   386→          });
+   387→        }
+   388→      }
+   389→    }
+   390→    return results;
+   391→  }, [data, filteredEmployees]);
+   392→
+   393→  const dobleEntradaFiltered = useMemo(() => {
+   394→    if (!search) return dobleEntrada;
+   395→    const s = search.toLowerCase();
+   396→    return dobleEntrada.filter(e => e.nombre.toLowerCase().includes(s) || String(e.codigoEmp).includes(s));
+   397→  }, [dobleEntrada, search]);
+   398→
+   399→  // EX-TT: employees from G.L.D. EX-TT with >20 min outside depot per day
+   400→  const exttData = useMemo(() => {
+   401→    if (!data) return [];
+   402→    const source = fechaFilter ? data.employees.filter(e => e.fecha === fechaFilter) : data.employees;
+   403→    const exttEmps = source.filter(e => {
+   404→      const upper = e.empresa.toUpperCase();
+   405→      return upper.includes('EX-TT');
+   406→    });
+   407→    const results: { codigoEmp: number; nombre: string; empresa: string; sector: string; fecha: string; jornada: string; totalFueraSegundos: number; totalFuera: string; tiemposFuera: TimeOutPair[]; salidasCount: number }[] = [];
+   408→    for (const emp of exttEmps) {
+   409→      if (emp.totalFueraSegundos > 1200) {
+   410→        results.push({
+   411→          codigoEmp: emp.codigoEmp, nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector,
+   412→          fecha: emp.fecha, jornada: emp.jornada, totalFueraSegundos: emp.totalFueraSegundos,
+   413→          totalFuera: emp.totalFuera, tiemposFuera: emp.tiemposFuera, salidasCount: emp.tiemposFuera.length,
+   414→        });
+   415→      }
+   416→    }
+   417→    results.sort((a, b) => b.totalFueraSegundos - a.totalFueraSegundos);
+   418→    return results;
+   419→  }, [data, fechaFilter]);
+   420→
+   421→  // EXTT summary cards (current data, not filtered)
+   422→  const exttSummary = useMemo(() => {
+   423→    if (!data) return null;
+   424→    const allExtt = data.employees.filter(e => e.empresa.toUpperCase().includes('EX-TT') && e.totalFueraSegundos > 1200);
+   425→    if (allExtt.length === 0) return null;
+   426→    const uniqueEmps = new Set(allExtt.map(e => e.codigoEmp));
+   427→    const tm = allExtt.filter(e => e.jornada?.toUpperCase().includes('TM'));
+   428→    const tt = allExtt.filter(e => e.jornada?.toUpperCase().includes('TT'));
+   429→    const tn = allExtt.filter(e => e.jornada?.toUpperCase().includes('TN'));
+   430→    return {
+   431→      totalEmpleados: uniqueEmps.size,
+   432→      totalRegistros: allExtt.length,
+   433→      totalSalidas: allExtt.reduce((s, e) => s + e.tiemposFuera.length, 0),
+   434→      totalFueraSegundos: allExtt.reduce((s, e) => s + e.totalFueraSegundos, 0),
+   435→      tm: { empleados: new Set(tm.map(e => e.codigoEmp)).size, registros: tm.length, salidas: tm.reduce((s, e) => s + e.tiemposFuera.length, 0), fueraSegundos: tm.reduce((s, e) => s + e.totalFueraSegundos, 0) },
+   436→      tt: { empleados: new Set(tt.map(e => e.codigoEmp)).size, registros: tt.length, salidas: tt.reduce((s, e) => s + e.tiemposFuera.length, 0), fueraSegundos: tt.reduce((s, e) => s + e.totalFueraSegundos, 0) },
+   437→      tn: { empleados: new Set(tn.map(e => e.codigoEmp)).size, registros: tn.length, salidas: tn.reduce((s, e) => s + e.tiemposFuera.length, 0), fueraSegundos: tn.reduce((s, e) => s + e.totalFueraSegundos, 0) },
+   438→    };
+   439→  }, [data]);
+   440→
+   441→  const exttFiltered = useMemo(() => {
+   442→    if (!search) return exttData;
+   443→    const s = search.toLowerCase();
+   444→    return exttData.filter(e => e.nombre.toLowerCase().includes(s) || String(e.codigoEmp).includes(s));
+   445→  }, [exttData, search]);
+   446→
+   447→  const saveIndicadorSnapshot = useCallback(async () => {
+   448→    if (!data || filteredEmployees.length === 0) return;
+   449→    const dates = [...new Set(filteredEmployees.map(e => e.fecha))].sort();
+   450→    for (const fecha of dates) {
+   451→      const dayAll = filteredEmployees.filter(e => e.fecha === fecha);
+   452→      const dayInc = dayAll.filter(e => e.totalFueraSegundos > 0);
+   453→      const uniqueOps = new Set(dayAll.map(e => e.codigoEmp));
+   454→      const uniqueInc = new Set(dayInc.map(e => e.codigoEmp));
+   455→      const tm = dayInc.filter(e => e.turno === 'TM');
+   456→      const tt = dayInc.filter(e => e.turno === 'TT');
+   457→      const tn = dayInc.filter(e => e.turno === 'TN');
+   458→      const totalFuera = dayInc.reduce((s, e) => s + e.totalFueraSegundos, 0);
+   459→      const avg = uniqueInc.size > 0 ? Math.round(totalFuera / uniqueInc.size) : 0;
+   460→      try {
+   461→        await window.fetch('/api/indicador', {
+   462→          method: 'POST', headers: { 'Content-Type': 'application/json' },
+   463→          body: JSON.stringify({
+   464→            fecha,
+   465→            totalOperadores: uniqueOps.size, totalConIncidencia: uniqueInc.size,
+   466→            totalRegistros: dayInc.length, totalSalidas: dayInc.reduce((s, e) => s + e.tiemposFuera.length, 0),
+   467→            totalFueraSegundos: totalFuera, promedioFueraSegundos: avg,
+   468→            tmOperadores: new Set(tm.map(e => e.codigoEmp)).size, tmConIncidencia: tm.length,
+   469→            tmSalidas: tm.reduce((s, e) => s + e.tiemposFuera.length, 0), tmFueraSegundos: tm.reduce((s, e) => s + e.totalFueraSegundos, 0),
+   470→            ttOperadores: new Set(tt.map(e => e.codigoEmp)).size, ttConIncidencia: tt.length,
+   471→            ttSalidas: tt.reduce((s, e) => s + e.tiemposFuera.length, 0), ttFueraSegundos: tt.reduce((s, e) => s + e.totalFueraSegundos, 0),
+   472→            tnOperadores: new Set(tn.map(e => e.codigoEmp)).size, tnConIncidencia: tn.length,
+   473→            tnSalidas: tn.reduce((s, e) => s + e.tiemposFuera.length, 0), tnFueraSegundos: tn.reduce((s, e) => s + e.totalFueraSegundos, 0),
+   474→            sancionados: 0,
+   475→          }),
+   476→        });
+   477→      } catch { /* ignore */ }
+   478→    }
+   479→    await fetchIndicadores();
+   480→  }, [data, filteredEmployees, fetchIndicadores]);
+   481→
+   482→  // Auto-save general indicator snapshot when data loads
+   483→  useEffect(() => {
+   484→    if (filteredEmployees.length > 0) saveIndicadorSnapshot();
+   485→  }, [filteredEmployees, saveIndicadorSnapshot]);
+   486→
+   487→  const [sancionandoExtt, setSancionandoExtt] = useState(false);
+   488→  const sancionarTodosExtt = useCallback(async () => {
+   489→    setSancionandoExtt(true);
+   490→    let ok = 0, fail = 0;
+   491→    for (const emp of exttFiltered) {
+   492→      try {
+   493→        const eventos = emp.tiemposFuera.map(tf => ({
+   494→          salida: tf.salida, entrada: tf.entrada,
+   495→          duracion: tf.duracion, duracionSegundos: tf.duracionSegundos,
+   496→          fecha: emp.fecha,
+   497→        }));
+   498→        const r = await window.fetch('/api/sanciones', {
+   499→          method: 'POST', headers: { 'Content-Type': 'application/json' },
+   500→          body: JSON.stringify({
+   501→            codigoEmp: emp.codigoEmp, fecha: emp.fecha,
+   502→            salida: '', entrada: '',
+   503→            duracion: emp.totalFuera, duracionSegundos: emp.totalFueraSegundos,
+   504→            tipo: 'multiple-salidas', tipoLabel: 'MAYOR CANTIDAD DE SALIDAS - EXTT',
+   505→            nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector, jornada: emp.jornada,
+   506→            eventos,
+   507→          }),
+   508→        });
+   509→        if (r.ok) ok++; else fail++;
+   510→      } catch { fail++; }
+   511→    }
+   512→    setSancionandoExtt(false);
+   513→    await fetchSanciones();
+   514→    showToast(`Sanciones registradas: ${ok} ok, ${fail} errores`, ok > 0 ? 'success' : 'error');
+   515→  }, [exttFiltered, fetchSanciones, showToast]);
+   516→
+   517→  const totalFueraAll = activeRanking.reduce((s, e) => s + e.totalFueraSegundos, 0) || 0;
+   518→  const maxFuera = activeRanking[0];
+   519→  const totalEventos = filteredEmployees.reduce((s, e) => s + e.tiemposFuera.length, 0) || 0;
+   520→
+   521→  // Get individual exit events for an employee from filteredEmployees
+   522→  const getEmpEventos = useCallback((codigoEmp: number) => {
+   523→    return filteredEmployees
+   524→      .filter(e => e.codigoEmp === codigoEmp)
+   525→      .flatMap(e => e.tiemposFuera.map(tf => ({
+   526→        salida: tf.salida, entrada: tf.entrada,
+   527→        duracion: tf.duracion, duracionSegundos: tf.duracionSegundos,
+   528→        fecha: e.fecha,
+   529→      })));
+   530→  }, [filteredEmployees]);
+   531→
+   532→  const hasData = data && data.employees.length > 0;
+   533→  const isEmpty = data && data.employees.length === 0 && !error;
+   534→
+   535→  const generateSancion = useCallback(async (codigoEmp: number, fecha: string, salida: string, entrada: string, duracion: string, duracionSegundos: number, tipo: string, nombre?: string, empresa?: string, sector?: string, jornada?: string, eventos?: { salida: string; entrada: string; duracion: string; duracionSegundos: number; fecha: string }[]) => {
+   536→    try {
+   537→      const tipoLabels: Record<string, string> = {
+   538→        desayuno: 'EXCESO DE DESAYUNO',
+   539→        'break-tarde': 'EXCESO BREAK TARDE',
+   540→        'break-noche': 'EXCESO BREAK NOCHE',
+   541→        'multiple-salidas': 'MAYOR CANTIDAD DE SALIDAS',
+   542→      };
+   543→      const r = await window.fetch('/api/sanciones', {
+   544→        method: 'POST', headers: { 'Content-Type': 'application/json' },
+   545→        body: JSON.stringify({ codigoEmp, fecha, salida, entrada, duracion, duracionSegundos, tipo, tipoLabel: tipoLabels[tipo] || tipo.toUpperCase(), ...(nombre ? { nombre } : {}), ...(empresa ? { empresa } : {}), ...(sector ? { sector } : {}), ...(jornada ? { jornada } : {}), ...(eventos ? { eventos } : {}) }),
+   546→      });
+   547→      if (r.ok) {
+   548→        showToast('Sancion registrada correctamente', 'success');
+   549→        await fetchSanciones();
+   550→      } else {
+   551→        const err = await r.json().catch(() => ({}));
+   552→        showToast(err.error || 'Error al registrar sancion', 'error');
+   553→      }
+   554→    } catch {
+   555→      showToast('Error de conexion al registrar sancion', 'error');
+   556→    }
+   557→  }, [showToast, fetchSanciones]);
+   558→
+   559→  const printSancion = useCallback(async (id: string) => {
+   560→    try {
+   561→      const [sancionR, movR] = await Promise.all([
+   562→        window.fetch(`/api/sanciones/${id}`),
+   563→        window.fetch(`/api/sanciones/${id}/movimientos`),
+   564→      ]);
+   565→      if (!sancionR.ok) { showToast('Error al obtener sancion', 'error'); return; }
+   566→      const sancion = await sancionR.json();
+   567→      const movRows: { fecha: string; hora: string; evento: string; tipo: string; duracion: string }[] = movR.ok ? await movR.json() : [];
+   568→
+   569→      const isMultiple = sancion.tipo === 'multiple-salidas';
+   570→
+   571→      // Calculate total accumulated time from movements (salida->entrada pairs)
+   572→      let totalAccSecs = 0;
+   573→      const pairRows: { fecha: string; salida: string; entrada: string; duracion: string; duracionSegs: number }[] = [];
+   574→      const processedEntradas = new Set<number>();
+   575→      for (let i = 0; i < movRows.length; i++) {
+   576→        const m = movRows[i];
+   577→        if (m.tipo === 'Acceso' && m.evento.toLowerCase().includes('salida') && m.duracion) {
+   578→          // Find matching entrada
+   579→          for (let j = i + 1; j < movRows.length; j++) {
+   580→            if (movRows[j].fecha !== m.fecha) break;
+   581→            if (movRows[j].tipo === 'Acceso' && movRows[j].evento.toLowerCase().includes('entrada') && !processedEntradas.has(j)) {
+   582→              const sParts = m.hora.split(':').map(Number);
+   583→              const eParts = movRows[j].hora.split(':').map(Number);
+   584→              const secs = (eParts[0] * 3600 + eParts[1] * 60 + (eParts[2] || 0)) - (sParts[0] * 3600 + sParts[1] * 60 + (sParts[2] || 0));
+   585→              if (secs > 0) {
+   586→                totalAccSecs += secs;
+   587→                pairRows.push({ fecha: m.fecha, salida: m.hora, entrada: movRows[j].hora, duracion: m.duracion, duracionSegs: secs });
+   588→                processedEntradas.add(j);
+   589→              }
+   590→              break;
+   591→            }
+   592→          }
+   593→        }
+   594→      }
+   595→      const totalAccH = Math.floor(totalAccSecs / 3600);
+   596→      const totalAccM = Math.floor((totalAccSecs % 3600) / 60);
+   597→      const totalAccS = totalAccSecs % 60;
+   598→      const totalAccStr = `${String(totalAccH).padStart(2, '0')}:${String(totalAccM).padStart(2, '0')}:${String(totalAccS).padStart(2, '0')}`;
+   599→
+   600→      // Count exits per day
+   601→      const exitsByDay: Record<string, number> = {};
+   602→      for (const m of movRows) {
+   603→        if (m.tipo === 'Acceso' && m.evento.toLowerCase().includes('salida')) {
+   604→          exitsByDay[m.fecha] = (exitsByDay[m.fecha] || 0) + 1;
+   605→        }
+   606→      }
+   607→      const exitsByDayStr = Object.entries(exitsByDay)
+   608→        .sort(([a], [b]) => a.localeCompare(b))
+   609→        .map(([fecha, count]) => `${fecha}: ${count} salida${count > 1 ? 's' : ''}`)
+   610→        .join(' | ');
+   611→
+   612→      const today = new Date().toISOString().split('T')[0];
+   613→      const [yr, mo, dy] = today.split('-');
+   614→
+   615→      const win = window.open('', '_blank', 'width=800,height=1000');
+   616→      if (!win) { showToast('Permite ventanas emergentes para imprimir', 'error'); return; }
+   617→
+   618→      // Build the movements table rows - only Acceso (salida/entrada) with duration
+   619→      const movTableRows = movRows
+   620→        .map((m, i) => {
+   621→          const isSalida = m.tipo === 'Acceso' && m.evento.toLowerCase().includes('salida');
+   622→          const isEntrada = m.tipo === 'Acceso' && m.evento.toLowerCase().includes('entrada');
+   623→          const bgStyle = isSalida ? 'background:#FFF3CD;' : isEntrada ? 'background:#D1ECF1;' : '';
+   624→          const durCell = isSalida ? `<td style="${bgStyle}">${m.duracion || '-'}</td>` : '<td></td>';
+   625→          return `<tr style="${bgStyle}"><td>${i + 1}</td><td>${m.fecha}</td><td>${m.hora}</td><td>${m.evento}</td><td>${m.tipo}</td>${durCell}</tr>`;
+   626→        }).join('');
+   627→
+   628→      // Build paired exit table for multiple-salidas
+   629→      const pairTableRows = pairRows.map((p, i) =>
+   630→        `<tr><td>${i + 1}</td><td>${p.fecha}</td><td>${p.salida}</td><td>${p.entrada}</td><td style="font-weight:bold;">${p.duracion}</td></tr>`
+   631→      ).join('');
+   632→
+   633→      // Build incidence description
+   634→      const incidenceDesc = isMultiple
+   635→        ? `El colaborador ${sancion.nombre} (Legajo ${sancion.codigoEmp}), empleado de ${sancion.empresa}, sector ${sancion.sector}, registro multiples salidas del deposito sin justificacion, acumulando un tiempo total fuera de deposito de <b>${totalAccStr}</b> en ${pairRows.length} salida${pairRows.length > 1 ? 's' : ''}. ${exitsByDayStr ? 'Distribucion por dia: ' + exitsByDayStr + '.' : ''} Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).`
+   636→        : `El colaborador ${sancion.nombre} (Legajo ${sancion.codigoEmp}), empleado de ${sancion.empresa}, sector ${sancion.sector}, registro una salida del deposito a las ${sancion.salida} hs y un reingreso a las ${sancion.entrada} hs del dia ${sancion.fecha}, generando un tiempo fuera de deposito de ${sancion.duracion}, superando el tiempo maximo permitido para el periodo correspondiente. Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).`;
+   637→
+   638→      // Build incidence detail section
+   639→      const incidenceDetail = isMultiple
+   640→        ? `Colaborador: ${sancion.nombre} (Legajo: ${sancion.codigoEmp})<br>
+   641→      Empresa: ${sancion.empresa} | Sector: ${sancion.sector}<br>
+   642→      Total de salidas: ${pairRows.length}<br>
+   643→      Tiempo acumulado fuera de deposito: <b>${totalAccStr}</b><br>
+   644→      ${exitsByDayStr ? 'Salidas por dia: ' + exitsByDayStr + '<br>' : ''}
+   645→      Exceso supera el maximo permitido.`
+   646→        : `Colaborador: ${sancion.nombre} (Legajo: ${sancion.codigoEmp})<br>
+   647→      Empresa: ${sancion.empresa} | Sector: ${sancion.sector}<br>
+   648→      Fecha del hecho: ${sancion.fecha}<br>
+   649→      Salida del deposito: ${sancion.salida} hs<br>
+   650→      Reingreso al deposito: ${sancion.entrada} hs<br>
+   651→      Tiempo fuera de deposito: ${sancion.duracion}<br>
+   652→      Exceso supera el maximo permitido.`;
+   653→
+   654→      win.document.write(`<!DOCTYPE html>
+   655→<html><head><meta charset="utf-8">
+   656→<title>Pedido de Explicacion - ${sancion.nombre}</title>
+   657→<style>
+   658→  @page { size: A4; margin: 1.2cm 1.5cm; }
+   659→  * { margin: 0; padding: 0; box-sizing: border-box; }
+   660→  body { font-family: Calibri, Arial, sans-serif; font-size: 10pt; color: #000; }
+   661→  .header-img { width: 100%; max-width: 520px; }
+   662→  .title { text-align: center; font-size: 14pt; font-weight: bold; margin: 6px 0 10px; }
+   663→  table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+   664→  td, th { border: 1px solid #000; padding: 4px 6px; vertical-align: middle; }
+   665→  th, .header-cell { background: #C8C8C8; font-weight: bold; font-size: 10pt; }
+   666→  .box-section h3 { font-size: 11pt; font-weight: bold; margin-bottom: 3px; }
+   667→  .mov-table { font-size: 8pt; width: 100%; margin-top: 6px; }
+   668→  .mov-table th { background: #DDD; font-size: 8pt; }
+   669→  .mov-table td, .mov-table th { padding: 2px 4px; }
+   670→  .pair-table { font-size: 8pt; width: 100%; margin-top: 4px; }
+   671→  .pair-table th { background: #E8D5F5; font-size: 8pt; }
+   672→  .pair-table td, .pair-table th { padding: 2px 4px; }
+   673→  .total-row { background: #F8D7DA !important; font-weight: bold; font-size: 9pt; }
+   674→  .footer-img { width: 100%; max-width: 700px; margin-top: 12px; }
+   675→  .no-print { margin-bottom: 10px; }
+   676→
+   677→  /* Page 2: flex container fills exactly one A4, boxes grow/shrink dynamically */
+   678→  .page2 {
+   679→    display: flex;
+   680→    flex-direction: column;
+   681→    height: 272mm;
+   682→    overflow: hidden;
+   683→  }
+   684→  .p2-section { display: flex; flex-direction: column; }
+   685→  .p2-section.colab { flex: 4; }
+   686→  .p2-section.coord { flex: 3; }
+   687→  .p2-section.suger { flex: 2; }
+   688→  .p2-label { font-size: 11pt; font-weight: bold; margin-bottom: 1mm; flex-shrink: 0; }
+   689→  .p2-box { flex: 1; border: 1px solid #000; width: 100%; min-height: 0; }
+   690→  .p2-sig-row { flex-shrink: 0; margin-top: 4mm; }
+   691→  .p2-sig-row td { text-align: center; height: 22mm; vertical-align: bottom; border: none; border-top: 1px solid #000; }
+   692→  .p2-footer { flex-shrink: 0; margin-top: auto; }
+   693→  .p2-footer img { width: 100%; max-width: 500px; }
+   694→  .footer-img { width: 100%; max-width: 500px; margin-top: 6mm; }
+   695→
+   696→  @media print {
+   697→    .no-print { display: none !important; }
+   698→    .page-break { page-break-before: always; }
+   699→    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+   700→  }
+   701→</style></head><body>
+   702→<div class="no-print" style="text-align:center;padding:8px;background:#f0f0f0;margin-bottom:10px;">
+   703→  <button onclick="window.print()" style="padding:8px 24px;font-size:12pt;cursor:pointer;border:1px solid #999;border-radius:4px;background:#fff;">
+   704→    Imprimir
+   705→  </button>
+   706→</div>
+   707→
+   708→<!-- ====== HOJA 1: EVIDENCIA ====== -->
+   709→<img class="header-img" src="/template_header.png" alt="Logo">
+   710→<div class="title">PEDIDO DE EXPLICACION</div>
+   711→
+   712→<table>
+   713→  <tr><th class="header-cell">Datos del Colaborador</th><th class="header-cell">Datos de Coordinadores</th></tr>
+   714→  <tr><td><b>Apellido y Nombre:</b> ${sancion.nombre || '-'}</td><td><b>Apellido y Nombre:</b> </td></tr>
+   715→  <tr><td><b>Legajo:</b> ${sancion.codigoEmp || '-'}</td><td><b>Sector:</b> </td></tr>
+   716→  <tr><td><b>Sector:</b> PREPARACION</td><td><b>Interviene por RR.HH.</b> </td></tr>
+   717→  <tr><td><b>Funcion:</b> PREPARADOR</td><td><b>Apellido y Nombre:</b> </td></tr>
+   718→  <tr><td><b>Turno:</b> ${sancion.jornada || '-'}</td><td></td></tr>
+   719→</table>
+   720→
+   721→<table>
+   722→  <tr><td><b>Fecha:</b> ${dy} / ${mo} / ${yr}</td></tr>
+   723→</table>
+   724→
+   725→<table>
+   726→  <tr><th colspan="2" class="header-cell" style="font-size:12pt;">Incidencia Proceso Operaciones</th></tr>
+   727→  <tr>
+   728→    <td style="width:42%;"><b>${(sancion.tipoLabel || sancion.tipo || '').toUpperCase()}</b></td>
+   729→    <td style="width:58%;">
+   730→      ${incidenceDetail}
+   731→    </td>
+   732→  </tr>
+   733→</table>
+   734→
+   735→<div class="box-section">
+   736→  <h3>Evidencia del Caso</h3>
+   737→  <table><tr><td style="min-height:100px; vertical-align:top; padding: 6px;">
+   738→    ${incidenceDesc}
+   739→    ${isMultiple && pairRows.length > 0 ? `
+   740→    <br><br>
+   741→    <table class="pair-table">
+   742→      <tr><th>#</th><th>Fecha</th><th>Salida Depo</th><th>Entrada Depo</th><th>Tiempo Fuera</th></tr>
+   743→      ${pairTableRows}
+   744→      <tr class="total-row"><td colspan="4" style="text-align:right;">TIEMPO ACUMULADO TOTAL:</td><td>${totalAccStr}</td></tr>
+   745→    </table>` : ''}
+   746→    ${!isMultiple ? `
+   747→    <table class="mov-table" style="margin-top:6px;">
+   748→      <tr><th>#</th><th>Fecha</th><th>Hora</th><th>Evento / Movimiento</th><th>Tipo</th><th>Tiempo</th></tr>
+   749→      ${movTableRows}
+   750→    </table>` : `
+   751→    <br><br>
+   752→    <table class="mov-table">
+   753→      <tr><th>#</th><th>Fecha</th><th>Hora</th><th>Evento / Movimiento</th><th>Tipo</th><th>Tiempo</th></tr>
+   754→      ${movTableRows}
+   755→    </table>`}
+   756→  </td></tr></table>
+   757→</div>
+   758→
+   759→<!-- ====== HOJA 2: DESCARGOS Y FIRMAS ====== -->
+   760→<div class="page-break"></div>
+   761→<div class="page2">
+   762→
+   763→  <div class="p2-section colab">
+   764→    <div class="p2-label">Descargo del Colaborador</div>
+   765→    <div class="p2-box"></div>
+   766→  </div>
+   767→
+   768→  <div class="p2-section coord">
+   769→    <div class="p2-label">Descargo del Coordinador</div>
+   770→    <div class="p2-box"></div>
+   771→  </div>
+   772→
+   773→  <div class="p2-section suger">
+   774→    <div class="p2-label">Sugerencias / Mejora / Compromiso</div>
+   775→    <div class="p2-box"></div>
+   776→  </div>
+   777→
+   778→  <table class="p2-sig-row" style="width:100%; border-collapse:collapse;">
+   779→    <tr>
+   780→      <td style="width:33%;">Firma del Colaborador</td>
+   781→      <td style="width:33%;">Firma del Coordinador</td>
+   782→      <td style="width:34%;">Firma de RR.HH.</td>
+   783→    </tr>
+   784→  </table>
+   785→
+   786→  <div class="p2-footer">
+   787→    <img src="/template_footer.png" alt="Footer">
+   788→  </div>
+   789→</div>
+   790→
+   791→<script>setTimeout(()=>{window.print();},500);</script>
+   792→</body></html>`);
+   793→      win.document.close();
+   794→    } catch {
+   795→      showToast('Error al imprimir', 'error');
+   796→    }
+   797→  }, [showToast]);
+   798→
+   799→  const deleteSancion = useCallback(async (id: string) => {
+   800→    try {
+   801→      const r = await window.fetch(`/api/sanciones/${id}`, { method: 'DELETE' });
+   802→      if (r.ok) {
+   803→        showToast('Sancion eliminada', 'success');
+   804→        await fetchSanciones();
+   805→      }
+   806→    } catch {
+   807→      showToast('Error al eliminar sancion', 'error');
+   808→    }
+   809→  }, [showToast, fetchSanciones]);
+   810→
+   811→  return (
+   812→    <div className="min-h-screen bg-white flex flex-col">
+   813→      {/* ═══════════ HEADER ═══════════ */}
+   814→      <header className="border-b border-gray-200 bg-white sticky top-0 z-50">
+   815→        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+   816→          <h1 className="text-base sm:text-lg font-bold text-gray-800 whitespace-nowrap">Tiempos Fuera de Deposito</h1>
+   817→          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
+   818→            <div className="relative">
+   819→              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+   820→              <Input placeholder="Buscar operador..." value={search} onChange={e => setSearch(e.target.value)}
+   821→                className="pl-8 h-8 w-40 sm:w-52 text-sm border-gray-300" />
+   822→            </div>
+   823→            <select value={filterTurno} onChange={e => setFilterTurno(e.target.value)}
+   824→              className="h-8 text-sm border border-gray-300 rounded-md px-2 bg-white text-gray-600 focus:outline-none">
+   825→              <option value="all">Turno: Todos</option>
+   826→              {data?.turnos.map(t => <option key={t} value={t}>{t} — {turnoMeta[t]?.label || t}</option>)}
+   827→            </select>
+   828→            <Button variant="outline" size="sm" className="h-8 text-sm border-gray-300 text-gray-600"
+   829→              onClick={() => setShowUpload(!showUpload)}>
+   830→              <Upload className="h-3.5 w-3.5 mr-1" /> Cargar
+   831→            </Button>
+   832→            <Button size="sm" className="h-8 bg-red-500 hover:bg-red-600 text-white text-sm"
+   833→              onClick={fetchData} disabled={loading}>
+   834→              <RefreshCw className={`h-3.5 w-3.5 mr-1 ${loading ? 'animate-spin' : ''}`} /> Actualizar
+   835→            </Button>
+   836→          </div>
+   837→        </div>
+   838→
+   839→        {/* Upload dropdown */}
+   840→        {showUpload && (
+   841→          <div className="border-t border-gray-100 bg-gray-50 px-4 sm:px-6 py-3">
+   842→            <div className="max-w-7xl mx-auto flex items-center gap-3 flex-wrap">
+   843→              <span className="text-xs text-gray-500 font-medium">Cargar archivo:</span>
+   844→              {[
+   845→                { label: 'Accesos', ep: '/api/upload-accesos' },
+   846→                { label: 'Comidas (TK)', ep: '/api/upload-comidas' },
+   847→                { label: 'Facial', ep: '/api/upload-facial' },
+   848→              ].map(({ label, ep }) => (
+   849→                <Button key={ep} variant="outline" size="sm" className="h-8 text-xs border-gray-300 text-gray-600"
+   850→                  disabled={uploading !== null}
+   851→                  onClick={() => triggerFileInput(ep)}>
+   852→                  {uploading === ep ? (
+   853→                    <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
+   854→                  ) : (
+   855→                    <FileSpreadsheet className="h-3 w-3 mr-1.5 text-gray-400" />
+   856→                  )}
+   857→                  {label}
+   858→                </Button>
+   859→              ))}
+   860→              <input
+   861→                key="/api/upload-accesos"
+   862→                ref={el => { fileInputsRef.current['/api/upload-accesos'] = el; }}
+   863→                type="file" accept=".xlsx,.xls" className="hidden"
+   864→                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-accesos', 'Accesos', f); e.target.value = ''; }} />
+   865→              <input
+   866→                key="/api/upload-comidas"
+   867→                ref={el => { fileInputsRef.current['/api/upload-comidas'] = el; }}
+   868→                type="file" accept=".xlsx,.xls" className="hidden"
+   869→                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-comidas', 'Comidas', f); e.target.value = ''; }} />
+   870→              <input
+   871→                key="/api/upload-facial"
+   872→                ref={el => { fileInputsRef.current['/api/upload-facial'] = el; }}
+   873→                type="file" accept=".xlsx,.xls" className="hidden"
+   874→                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-facial', 'Facial', f); e.target.value = ''; }} />
+   875→              <span className="text-[10px] text-gray-400 ml-2">Se sobreescribe con cada carga</span>
+   876→            </div>
+   877→          </div>
+   878→        )}
+   879→      </header>
+   880→
+   881→      {/* ═══════════ MAIN ═══════════ */}
+   882→      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-5 space-y-4">
+   883→
+   884→        {/* ── Error state ── */}
+   885→        {error && !loading && (
+   886→          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+   887→            <XCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+   888→            <div>
+   889→              <p className="text-sm font-semibold text-red-700">Error de conexión con la base de datos</p>
+   890→              <p className="text-xs text-red-500 mt-1">{error}</p>
+   891→              <p className="text-xs text-red-400 mt-2">Verificá que la variable DATABASE_URL esté configurada en Vercel.</p>
+   892→            </div>
+   893→          </div>
+   894→        )}
+   895→
+   896→        {/* ── Loading ── */}
+   897→        {loading && !error && (
+   898→          <div className="space-y-3">
+   899→            <Skeleton className="h-4 w-48" />
+   900→            <Skeleton className="h-10 w-full" />
+   901→            <Skeleton className="h-10 w-full" />
+   902→            <Skeleton className="h-10 w-full" />
+   903→          </div>
+   904→        )}
+   905→
+   906→        {/* ── Empty state (no data yet) ── */}
+   907→        {isEmpty && (
+   908→          <div className="text-center py-20">
+   909→            <FileSpreadsheet className="h-16 w-16 mx-auto text-gray-200 mb-4" />
+   910→            <p className="text-gray-500 text-base font-medium">No hay datos cargados</p>
+   911→            <p className="text-gray-400 text-sm mt-1">Usá el botón &quot;Cargar&quot; de arriba para subir los archivos Excel</p>
+   912→            <div className="flex items-center justify-center gap-2 mt-4">
+   913→              <Button variant="outline" size="sm" onClick={() => triggerFileInput('/api/upload-accesos')}
+   914→                className="text-sm">
+   915→                <FileSpreadsheet className="h-4 w-4 mr-2" /> Cargar Accesos
+   916→              </Button>
+   917→            </div>
+   918→          </div>
+   919→        )}
+   920→
+   921→        {/* ══════════════════════════════════════
+   922→            CONTENT (has data)
+   923→            ══════════════════════════════════════ */}
+   924→        {hasData && !loading && (
+   925→          <>
+   926→            {/* ── Tabs ── */}
+   927→            <div className="flex items-center gap-0.5 border-b border-gray-200 overflow-x-auto">
+   928→              <button onClick={() => setActiveTab('ranking')}
+   929→                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'ranking' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+   930→                Ranking General
+   931→              </button>
+   932→              <button onClick={() => setActiveTab('doble-entrada')}
+   933→                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'doble-entrada' ? 'border-teal-500 text-teal-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+   934→                <Copy className="h-3.5 w-3.5" /> Doble Entrada {dobleEntrada.length > 0 && <span className="bg-teal-500 text-white text-[10px] rounded-full w-4 h-4 inline-flex items-center justify-center">{dobleEntrada.length}</span>}
+   935→              </button>
+   936→              <button onClick={() => setActiveTab('extt')}
+   937→                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'extt' ? 'border-amber-600 text-amber-700' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+   938→                <AlertTriangle className="h-3.5 w-3.5" /> EXTT {exttData.length > 0 && <span className="bg-amber-600 text-white text-[10px] rounded-full w-4 h-4 inline-flex items-center justify-center">{exttData.length}</span>}
+   939→              </button>
+   940→              <button onClick={() => setActiveTab('indicador')}
+   941→                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'indicador' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+   942→                <Users className="h-3.5 w-3.5" /> Indicador
+   943→              </button>
+   944→              <button onClick={() => setActiveTab('desayuno')}
+   945→                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'desayuno' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+   946→                <Coffee className="h-3.5 w-3.5" /> Exceso Desayuno
+   947→              </button>
+   948→              <button onClick={() => setActiveTab('break-tarde')}
+   949→                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'break-tarde' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+   950→                <Sunset className="h-3.5 w-3.5" /> Break Tarde
+   951→              </button>
+   952→              <button onClick={() => setActiveTab('break-noche')}
+   953→                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'break-noche' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+   954→                <Moon className="h-3.5 w-3.5" /> Break Noche
+   955→              </button>
+   956→              <button onClick={() => setActiveTab('sanciones')}
+   957→                className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'sanciones' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+   958→                <FileText className="h-3.5 w-3.5" /> Sanciones {sanciones.length > 0 && <span className="bg-red-500 text-white text-[10px] rounded-full w-4 h-4 inline-flex items-center justify-center">{sanciones.length}</span>}
+   959→              </button>
+   960→            </div>
+   961→
+   962→            {/* ── Date filter ── */}
+   963→            <div className="flex items-center gap-2 mb-3">
+   964→              <input type="date" value={fechaFilter}
+   965→                onChange={e => setFechaFilter(e.target.value)}
+   966→                className="h-8 text-xs border border-gray-300 rounded px-2 bg-white" />
+   967→              {fechaFilter && <button onClick={() => setFechaFilter('')} className="text-xs text-gray-400 hover:text-gray-600">✕ Limpiar</button>}
+   968→            </div>
+   969→
+   970→            {/* ═══════════ TAB: RANKING GENERAL ═══════════ */}
+   971→            {activeTab === 'ranking' && (
+   972→              <div className="space-y-4 pt-1">
+   973→                {/* ── Metric Cards ── */}
+   974→                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+   975→                  <MetricCard icon={<Users className="h-5 w-5 text-blue-500" />} label="Total Empleados" value={String(data.summary.totalEmployees)} accent="border-l-blue-500" />
+   976→                  <MetricCard icon={<Clock className="h-5 w-5 text-red-500" />} label="Suma Tiempos Fuera" value={formatHMS(totalFueraAll)} sub={`${totalEventos} eventos`} accent="border-l-red-500" subBg="bg-red-50" />
+   977→                  <MetricCard icon={<AlertTriangle className="h-5 w-5 text-amber-500" />} label="Promedio por Empleado" value={data.summary.avgOutsidePerEmployee} accent="border-l-amber-500" />
+   978→                  <MetricCard icon={<Clock className="h-5 w-5 text-orange-500" />} label="Mayor Tiempo Fuera" value={maxFuera ? maxFuera.totalFuera : '00:00:00'} sub={maxFuera ? maxFuera.nombre : ''} accent="border-l-orange-500" />
+   979→                </div>
+   980→
+   981→                {/* ── Summary bar ── */}
+   982→                <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-2.5 flex items-center gap-6 flex-wrap">
+   983→                  <div className="flex items-center gap-1.5 text-red-600">
+   984→                    <AlertTriangle className="h-4 w-4" />
+   985→                    <span className="text-xs font-semibold uppercase tracking-wider">Resumen</span>
+   986→                  </div>
+   987→                  <span className="text-sm"><b className="text-red-600">{totalEventos}</b> <span className="text-gray-500">salidas</span></span>
+   988→                  <span className="text-sm"><b className="text-red-600">{formatHMS(totalFueraAll)}</b> <span className="text-gray-500">suma total</span></span>
+   989→                  <span className="text-sm"><b className="text-red-600">{data.summary.totalEmployees}</b> <span className="text-gray-500">empleados</span></span>
+   990→                </div>
+   991→
+   992→                {/* ── Sub-tabs: Tiempo / Salidas ── */}
+   993→                <div className="flex gap-1 mb-3">
+   994→                  <button onClick={() => setRankingSubTab('tiempo')}
+   995→                    className={`px-3 py-1.5 text-xs font-semibold rounded-t-lg border-b-2 transition-colors ${rankingSubTab === 'tiempo' ? 'border-red-500 text-red-600 bg-red-50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+   996→                    Mayor Tiempo Fuera
+   997→                  </button>
+   998→                  <button onClick={() => setRankingSubTab('salidas')}
+   999→                    className={`px-3 py-1.5 text-xs font-semibold rounded-t-lg border-b-2 transition-colors ${rankingSubTab === 'salidas' ? 'border-purple-600 text-purple-700 bg-purple-50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+  1000→                    Mayor Cantidad de Salidas
+  1001→                  </button>
+  1002→                </div>
+  1003→
+  1004→                {/* ── Tabla: Tiempo ── */}
+  1005→                {rankingSubTab === 'tiempo' && (
+  1006→                <div className="border border-gray-200 rounded-lg overflow-hidden">
+  1007→                  <div className="overflow-x-auto">
+  1008→                    <table className="w-full text-sm">
+  1009→                      <thead>
+  1010→                        <tr className="bg-gray-50 text-left">
+  1011→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
+  1012→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+  1013→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-20">Turno</th>
+  1014→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-32">T. Fuera Deposito</th>
+  1015→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Prom/Dia</th>
+  1016→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Dias</th>
+  1017→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Mayor Dia</th>
+  1018→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-16">Eventos</th>
+  1019→                        </tr>
+  1020→                      </thead>
+  1021→                      <tbody className="divide-y divide-gray-100">
+  1022→                        {rankingByTime.map((emp, idx) => {
+  1023→                          const pos = idx + 1;
+  1024→                          const rankBadge = pos <= 3 ? 'bg-red-500' : pos <= 7 ? 'bg-orange-400' : '';
+  1025→                          const rowBg = pos <= 3 ? 'bg-red-50/40' : '';
+  1026→                          const empTurno = empTurnoMap.get(emp.codigoEmp) || '';
+  1027→                          const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
+  1028→                          const TurnoIcon = tMeta.icon;
+  1029→                          return (
+  1030→                            <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-gray-50 cursor-pointer transition-colors`}
+  1031→                              onClick={() => openProfile(emp.codigoEmp)}>
+  1032→                              <td className="px-3 py-3">
+  1033→                                {rankBadge ? (
+  1034→                                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
+  1035→                                ) : (
+  1036→                                  <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
+  1037→                                )}
+  1038→                              </td>
+  1039→                              <td className="px-3 py-3">
+  1040→                                <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
+  1041→                                <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
+  1042→                              </td>
+  1043→                              <td className="px-3 py-3">
+  1044→                                <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
+  1045→                                  <TurnoIcon className="h-3 w-3" /> {empTurno}
+  1046→                                </span>
+  1047→                              </td>
+  1048→                              <td className="px-3 py-3 text-right">
+  1049→                                <span className={`font-mono font-bold ${durTextColor(emp.totalFueraSegundos)}`}>{emp.totalFuera}</span>
+  1050→                              </td>
+  1051→                              <td className="px-3 py-3 text-right"><span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span></td>
+  1052→                              <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
+  1053→                              <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
+  1054→                              <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.eventosCount}</span></td>
+  1055→                            </tr>
+  1056→                          );
+  1057→                        })}
+  1058→                      </tbody>
+  1059→                    </table>
+  1060→                  </div>
+  1061→                </div>
+  1062→                )}
+  1063→
+  1064→                {/* ── Tabla: Salidas ── */}
+  1065→                {rankingSubTab === 'salidas' && (
+  1066→                <div className="border border-gray-200 rounded-lg overflow-hidden">
+  1067→                  <div className="overflow-x-auto">
+  1068→                    <table className="w-full text-sm">
+  1069→                      <thead>
+  1070→                        <tr className="bg-gray-50 text-left">
+  1071→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
+  1072→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+  1073→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-20">Turno</th>
+  1074→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-16">Salidas</th>
+  1075→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-32">T. Fuera Deposito</th>
+  1076→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Prom/Dia</th>
+  1077→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Dias</th>
+  1078→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-24">Mayor Dia</th>
+  1079→                          <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center w-20">Accion</th>
+  1080→                        </tr>
+  1081→                      </thead>
+  1082→                      <tbody className="divide-y divide-gray-100">
+  1083→                        {rankingByExits.map((emp, idx) => {
+  1084→                          const pos = idx + 1;
+  1085→                          const rankBadge = pos <= 3 ? 'bg-purple-600' : pos <= 7 ? 'bg-purple-400' : '';
+  1086→                          const rowBg = pos <= 3 ? 'bg-purple-50/40' : '';
+  1087→                          const empTurno = empTurnoMap.get(emp.codigoEmp) || '';
+  1088→                          const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
+  1089→                          const TurnoIcon = tMeta.icon;
+  1090→                          return (
+  1091→                            <tr key={emp.codigoEmp} className={`${rowBg} hover:bg-gray-50 cursor-pointer transition-colors`}
+  1092→                              onClick={() => openProfile(emp.codigoEmp)}>
+  1093→                              <td className="px-3 py-3">
+  1094→                                {rankBadge ? (
+  1095→                                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${rankBadge}`}>{pos}</span>
+  1096→                                ) : (
+  1097→                                  <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
+  1098→                                )}
+  1099→                              </td>
+  1100→                              <td className="px-3 py-3">
+  1101→                                <p className="font-semibold text-gray-800 text-sm">{emp.nombre}</p>
+  1102→                                <p className="text-[11px] text-gray-400">{emp.codigoEmp} &middot; {emp.empresa}</p>
+  1103→                              </td>
+  1104→                              <td className="px-3 py-3">
+  1105→                                <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
+  1106→                                  <TurnoIcon className="h-3 w-3" /> {empTurno}
+  1107→                                </span>
+  1108→                              </td>
+  1109→                              <td className="px-3 py-3 text-right">
+  1110→                                <span className="font-mono font-bold text-purple-700">{emp.eventosCount}</span>
+  1111→                              </td>
+  1112→                              <td className="px-3 py-3 text-right">
+  1113→                                <span className={`font-mono ${durTextColor(emp.totalFueraSegundos)}`}>{emp.totalFuera}</span>
+  1114→                              </td>
+  1115→                              <td className="px-3 py-3 text-right"><span className="font-mono text-gray-600 text-xs">{emp.avgPorDia}</span></td>
+  1116→                              <td className="px-3 py-3 text-right"><span className="text-gray-600 text-sm">{emp.diasCount}</span></td>
+  1117→                              <td className="px-3 py-3 text-right"><span className="font-mono text-xs text-gray-600">{emp.maxDiaFuera}</span></td>
+  1118→                              <td className="px-3 py-3 text-center" onClick={e => e.stopPropagation()}>
+  1119→                                <button onClick={() => generateSancion(emp.codigoEmp, emp.maxDiaFecha || '', '', '', emp.totalFuera, emp.totalFueraSegundos, 'multiple-salidas', emp.nombre, emp.empresa, emp.sector, '', getEmpEventos(emp.codigoEmp))}
+  1120→                                  className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors">
+  1121→                                  <AlertTriangle className="h-3 w-3" /> Sancionar
+  1122→                                </button>
+  1123→                              </td>
+  1124→                            </tr>
+  1125→                          );
+  1126→                        })}
+  1127→                      </tbody>
+  1128→                    </table>
+  1129→                  </div>
+  1130→                </div>
+  1131→                )}
+  1132→
+  1133→                {/* ── Por Turno cards ── */}
+  1134→                {filteredTurnoCards.length > 0 && (
+  1135→                  <div>
+  1136→                    <h2 className="text-sm font-bold text-gray-800 mb-3">Por Turno</h2>
+  1137→                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+  1138→                      {filteredTurnoCards.map(tr => {
+  1139→                        const tm = turnoMeta[tr.turno] || DEFAULT_TURNO_META;
+  1140→                        const TIcon = tm.icon;
+  1141→                        return (
+  1142→                          <div key={tr.turno} className={`rounded-xl border ${tm.border} ${tm.bg} p-4 cursor-pointer hover:shadow-md transition-shadow`}
+  1143→                            onClick={() => { setFilterTurno(tr.turno); }}>
+  1144→                            <div className="flex items-center gap-2 mb-1">
+  1145→                              <TIcon className={`h-4 w-4 ${tm.text}`} />
+  1146→                              <span className={`text-sm font-bold ${tm.text}`}>{tr.turno}</span>
+  1147→                              <span className="text-[10px] text-gray-400">{tm.label}</span>
+  1148→                            </div>
+  1149→                            <p className={`text-xl font-black font-mono ${tm.text}`}>{tr.totalFuera}</p>
+  1150→                            <p className="text-xs text-gray-500 mt-1">{tr.eventosCount} eventos &middot; {tr.empleados.length} operadores</p>
+  1151→                          </div>
+  1152→                        );
+  1153→                      })}
+  1154→                    </div>
+  1155→                  </div>
+  1156→                )}
+  1157→              </div>
+  1158→            )}
+  1159→
+  1160→            {/* ═══════════ TAB: DOBLE ENTRADA ═══════════ */}
+  1161→            {activeTab === 'doble-entrada' && (
+  1162→              <div className="space-y-4 pt-1">
+  1163→                <div className="bg-teal-50 border border-teal-100 rounded-lg px-4 py-3">
+  1164→                  <div className="flex items-center gap-2 mb-1">
+  1165→                    <Copy className="h-4 w-4 text-teal-600" />
+  1166→                    <h2 className="text-sm font-bold text-teal-800">Registros con Doble Entrada</h2>
+  1167→                  </div>
+  1168→                  <p className="text-xs text-teal-700">Detecta eventos donde un operador registra dos <b>Entrada Depo</b> consecutivas sin una <b>Salida Depo</b> en medio.</p>
+  1169→                  <p className="text-xs text-teal-600 mt-1"><b>{dobleEntradaFiltered.length}</b> casos encontrados {dobleEntradaFiltered.length !== dobleEntrada.length && `(filtrados de ${dobleEntrada.length})`}</p>
+  1170→                </div>
+  1171→
+  1172→                {dobleEntradaFiltered.length === 0 ? (
+  1173→                  <div className="text-center py-12 text-gray-400">
+  1174→                    <CheckCircle2 className="h-10 w-10 mx-auto mb-2 text-emerald-300" />
+  1175→                    <p className="text-sm">No se detectaron dobles entradas</p>
+  1176→                  </div>
+  1177→                ) : (
+  1178→                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+  1179→                    <div className="overflow-x-auto">
+  1180→                      <table className="w-full text-sm">
+  1181→                        <thead>
+  1182→                          <tr className="bg-gray-50 text-left">
+  1183→                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
+  1184→                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+  1185→                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-20">Turno</th>
+  1186→                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-24">Fecha</th>
+  1187→                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">1ra Entrada</th>
+  1188→                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">2da Entrada</th>
+  1189→                          </tr>
+  1190→                        </thead>
+  1191→                        <tbody className="divide-y divide-gray-100">
+  1192→                          {dobleEntradaFiltered.map((reg, idx) => {
+  1193→                            const pos = idx + 1;
+  1194→                            const empTurno = empTurnoMap.get(reg.codigoEmp) || reg.turno;
+  1195→                            const tMeta = turnoMeta[empTurno] || DEFAULT_TURNO_META;
+  1196→                            const TIcon = tMeta.icon;
+  1197→                            return (
+  1198→                              <tr key={`${reg.codigoEmp}-${reg.fecha}-${reg.hora1}`} className="bg-teal-50/30 hover:bg-teal-50/60 cursor-pointer transition-colors"
+  1199→                                onClick={() => openProfile(reg.codigoEmp)}>
+  1200→                                <td className="px-3 py-2.5">
+  1201→                                  <span className="text-xs text-gray-400 font-medium pl-1.5">{pos}</span>
+  1202→                                </td>
+  1203→                                <td className="px-3 py-2.5">
+  1204→                                  <p className="font-semibold text-gray-800 text-sm">{reg.nombre}</p>
+  1205→                                  <p className="text-[11px] text-gray-400">{reg.codigoEmp} &middot; {reg.empresa}</p>
+  1206→                                </td>
+  1207→                                <td className="px-3 py-2.5">
+  1208→                                  <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
+  1209→                                    <TIcon className="h-3 w-3" /> {empTurno}
+  1210→                                  </span>
+  1211→                                </td>
+  1212→                                <td className="px-3 py-2.5 text-sm text-gray-700">{reg.fecha}</td>
+  1213→                                <td className="px-3 py-2.5 text-right font-mono text-xs text-teal-700 font-semibold">{reg.hora1}</td>
+  1214→                                <td className="px-3 py-2.5 text-right font-mono text-xs text-red-600 font-semibold">{reg.hora2}</td>
+  1215→                              </tr>
+  1216→                            );
+  1217→                          })}
+  1218→                        </tbody>
+  1219→                      </table>
+  1220→                    </div>
+  1221→                  </div>
+  1222→                )}
+  1223→              </div>
+  1224→            )}
+  1225→
+  1226→            {/* ═══════════ TAB: EXCESO DESAYUNO ═══════════ */}
+  1227→            {activeTab === 'desayuno' && (
+  1228→              <ExcesoTabContent
+  1229→                title="Exceso de Desayuno"
+  1230→                description="Salidas entre 06:45 y 09:45 hs con duracion mayor a 25 minutos"
+  1231→                icon={<Coffee className="h-5 w-5 text-orange-500 shrink-0" />}
+  1232→                iconSmall={<Coffee className="h-4 w-4" />}
+  1233→                colorClass="orange"
+  1234→                filtered={desayunoFiltered}
+  1235→                stats={desayunoStats}
+  1236→                openProfile={openProfile}
+  1237→                tipo="desayuno"
+  1238→                generateSancion={generateSancion}
+  1239→              />
+  1240→            )}
+  1241→
+  1242→            {/* ═══════════ TAB: BREAK TARDE ═══════════ */}
+  1243→            {activeTab === 'break-tarde' && (
+  1244→              <ExcesoTabContent
+  1245→                title="Exceso Break Tarde"
+  1246→                description="Salidas entre 16:30 y 17:30 hs con duracion mayor a 15 minutos"
+  1247→                icon={<Sunset className="h-5 w-5 text-purple-500 shrink-0" />}
+  1248→                iconSmall={<Sunset className="h-4 w-4" />}
+  1249→                colorClass="purple"
+  1250→                filtered={breakTardeFiltered}
+  1251→                stats={breakTardeStats}
+  1252→                openProfile={openProfile}
+  1253→                tipo="break-tarde"
+  1254→                generateSancion={generateSancion}
+  1255→              />
+  1256→            )}
+  1257→
+  1258→            {/* ═══════════ TAB: BREAK NOCHE ═══════════ */}
+  1259→            {activeTab === 'break-noche' && (
+  1260→              <ExcesoTabContent
+  1261→                title="Exceso Break Noche"
+  1262→                description="Salidas entre 02:40 y 03:30 hs con duracion mayor a 15 minutos"
+  1263→                icon={<Moon className="h-5 w-5 text-blue-500 shrink-0" />}
+  1264→                iconSmall={<Moon className="h-4 w-4" />}
+  1265→                colorClass="blue"
+  1266→                filtered={breakNocheFiltered}
+  1267→                stats={breakNocheStats}
+  1268→                openProfile={openProfile}
+  1269→                tipo="break-noche"
+  1270→                generateSancion={generateSancion}
+  1271→              />
+  1272→            )}
+  1273→
+  1274→            {activeTab === 'extt' && (
+  1275→              <div className="space-y-4">
+  1276→                {/* ── Summary cards by turno ── */}
+  1277→                {exttSummary && (
+  1278→                  <div className="grid grid-cols-3 gap-3">
+  1279→                    {([
+  1280→                      { key: 'tm', label: 'TM Mañana', icon: Sun, color: 'amber' },
+  1281→                      { key: 'tt', label: 'TT Tarde', icon: Sunset, color: 'orange' },
+  1282→                      { key: 'tn', label: 'TN Noche', icon: Moon, color: 'blue' },
+  1283→                    ] as const).map(({ key, label, icon: Icon, color }) => {
+  1284→                      const t = exttSummary[key];
+  1285→                      const colorMap: Record<string, { card: string; num: string; sub: string }> = {
+  1286→                        amber: { card: 'bg-amber-50 border-amber-200', num: 'text-amber-700', sub: 'text-amber-500' },
+  1287→                        orange: { card: 'bg-orange-50 border-orange-200', num: 'text-orange-700', sub: 'text-orange-500' },
+  1288→                        blue: { card: 'bg-blue-50 border-blue-200', num: 'text-blue-700', sub: 'text-blue-500' },
+  1289→                      };
+  1290→                      const c = colorMap[color];
+  1291→                      return (
+  1292→                        <div key={key} className={`rounded-lg border p-3 ${c.card}`}>
+  1293→                          <div className="flex items-center gap-1.5 mb-2">
+  1294→                            <Icon className="h-3.5 w-3.5 text-gray-400" />
+  1295→                            <span className="text-[11px] text-gray-500 font-medium">{label}</span>
+  1296→                          </div>
+  1297→                          <p className={`text-xl font-bold font-mono ${c.num}`}>{formatHM(t.fueraSegundos)}</p>
+  1298→                          <p className={`text-[11px] mt-1 ${c.sub}`}>{t.salidas} salidas &middot; {t.empleados} operadores</p>
+  1299→                        </div>
+  1300→                      );
+  1301→                    })}
+  1302→                  </div>
+  1303→                )}
+  1304→
+  1305→                {/* ── Current day detail table ── */}
+  1306→                <div className="flex items-center justify-between flex-wrap gap-2">
+  1307→                  <div>
+  1308→                    <h3 className="text-sm font-bold text-amber-800">G.L.D. EX-TT — Mas de 20 min fuera de deposito</h3>
+  1309→                    <p className="text-xs text-amber-600 mt-0.5"><b>{exttFiltered.length}</b> registros {exttFiltered.length !== exttData.length && `(filtrados de ${exttData.length})`}</p>
+  1310→                  </div>
+  1311→                  <button onClick={sancionarTodosExtt} disabled={sancionandoExtt || exttFiltered.length === 0}
+  1312→                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-red-500 text-white rounded-md hover:bg-red-600 disabled:opacity-50 transition-colors">
+  1313→                    {sancionandoExtt ? <RefreshCw className="h-3 w-3 animate-spin" /> : <AlertTriangle className="h-3 w-3" />}
+  1314→                    Sancionar todos ({exttFiltered.length})
+  1315→                  </button>
+  1316→                </div>
+  1317→                {exttFiltered.length === 0 ? (
+  1318→                  <div className="text-center py-12 text-gray-400"><AlertTriangle className="h-8 w-8 mx-auto mb-2 opacity-40" /><p className="text-sm">No hay registros EX-TT con mas de 20 minutos fuera</p></div>
+  1319→                ) : (
+  1320→                  <div className="border border-amber-200 rounded-lg overflow-hidden">
+  1321→                    <div className="overflow-x-auto">
+  1322→                      <table className="w-full text-sm">
+  1323→                        <thead>
+  1324→                          <tr className="bg-amber-50 text-left">
+  1325→                            <th className="px-3 py-2.5 text-xs font-semibold text-amber-700 w-12">#</th>
+  1326→                            <th className="px-3 py-2.5 text-xs font-semibold text-amber-700">Operador</th>
+  1327→                            <th className="px-3 py-2.5 text-xs font-semibold text-amber-700">Fecha</th>
+  1328→                            <th className="px-3 py-2.5 text-xs font-semibold text-amber-700 text-right w-16">Salidas</th>
+  1329→                            <th className="px-3 py-2.5 text-xs font-semibold text-amber-700 text-right w-28">T. Fuera</th>
+  1330→                            <th className="px-3 py-2.5 text-xs font-semibold text-amber-700 text-center w-20">Accion</th>
+  1331→                          </tr>
+  1332→                        </thead>
+  1333→                        <tbody className="divide-y divide-amber-100">
+  1334→                          {exttFiltered.map((reg, idx) => {
+  1335→                            const pos = idx + 1;
+  1336→                            const rowBg = reg.totalFueraSegundos > 3600 ? 'bg-red-50/40' : 'bg-amber-50/30';
+  1337→                            return (
+  1338→                              <tr key={`${reg.codigoEmp}-${reg.fecha}`} className={`${rowBg} hover:bg-amber-50/60 transition-colors cursor-pointer`} onClick={() => openProfile(reg.codigoEmp)}>
+  1339→                                <td className="px-3 py-2.5"><span className="text-xs text-gray-500 font-medium">{pos}</span></td>
+  1340→                                <td className="px-3 py-2.5">
+  1341→                                  <p className="font-semibold text-gray-800 text-sm">{reg.nombre}</p>
+  1342→                                  <p className="text-[11px] text-gray-400">{reg.codigoEmp} &middot; {reg.sector}</p>
+  1343→                                </td>
+  1344→                                <td className="px-3 py-2.5 text-gray-600 text-sm">{reg.fecha}</td>
+  1345→                                <td className="px-3 py-2.5 text-right">
+  1346→                                  <span className="font-mono font-bold text-amber-700">{reg.salidasCount}</span>
+  1347→                                </td>
+  1348→                                <td className="px-3 py-2.5 text-right">
+  1349→                                  <span className={`font-mono font-bold ${reg.totalFueraSegundos > 3600 ? 'text-red-600' : 'text-amber-700'}`}>{reg.totalFuera}</span>
+  1350→                                </td>
+  1351→                                <td className="px-3 py-2.5 text-center" onClick={e => e.stopPropagation()}>
+  1352→                                  <button onClick={() => {
+  1353→                                    const eventos = reg.tiemposFuera.map(tf => ({ salida: tf.salida, entrada: tf.entrada, duracion: tf.duracion, duracionSegundos: tf.duracionSegundos, fecha: reg.fecha }));
+  1354→                                    generateSancion(reg.codigoEmp, reg.fecha, '', '', reg.totalFuera, reg.totalFueraSegundos, 'multiple-salidas', reg.nombre, reg.empresa, reg.sector, reg.jornada, eventos);
+  1355→                                  }} className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors">
+  1356→                                    <AlertTriangle className="h-3 w-3" /> Sancionar
+  1357→                                  </button>
+  1358→                                </td>
+  1359→                              </tr>
+  1360→                            );
+  1361→                          })}
+  1362→                        </tbody>
+  1363→                      </table>
+  1364→                    </div>
+  1365→                  </div>
+  1366→                )}
+  1367→              </div>
+  1368→            )}
+  1369→            {activeTab === 'indicador' && (
+  1370→              <div className="space-y-4">
+  1371→                <div className="flex items-center justify-between">
+  1372→                  <h3 className="text-sm font-bold text-emerald-800">Seguimiento de Comportamiento — Indicador Diario</h3>
+  1373→                  <span className="text-[10px] text-gray-400">{indicadores.length} dias registrados</span>
+  1374→                </div>
+  1375→                {indicadores.length === 0 ? (
+  1376→                  <div className="text-center py-16 text-gray-300"><Users className="h-10 w-10 mx-auto mb-2 opacity-30" /><p className="text-sm">Sin datos historicos. Los indicadores se guardan automaticamente al cargar datos.</p></div>
+  1377→                ) : (
+  1378→                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+  1379→                    <div className="overflow-x-auto">
+  1380→                      <table className="w-full text-xs">
+  1381→                        <thead>
+  1382→                          <tr className="bg-emerald-50 text-left">
+  1383→                            <th className="px-3 py-2 font-semibold text-emerald-800">Fecha</th>
+  1384→                            <th className="px-3 py-2 font-semibold text-emerald-800 text-right">Operadores</th>
+  1385→                            <th className="px-3 py-2 font-semibold text-emerald-800 text-right">Con Incidencia</th>
+  1386→                            <th className="px-3 py-2 font-semibold text-emerald-800 text-right">% Incidencia</th>
+  1387→                            <th className="px-3 py-2 font-semibold text-emerald-800 text-right">Salidas</th>
+  1388→                            <th className="px-3 py-2 font-semibold text-emerald-800 text-right">T. Total</th>
+  1389→                            <th className="px-3 py-2 font-semibold text-emerald-800 text-right">Prom/Oper</th>
+  1390→                            <th className="px-3 py-2 font-semibold text-amber-600 text-right">TM Inc.</th>
+  1391→                            <th className="px-3 py-2 font-semibold text-amber-600 text-right">TM Sal.</th>
+  1392→                            <th className="px-3 py-2 font-semibold text-amber-600 text-right">TM Tiempo</th>
+  1393→                            <th className="px-3 py-2 font-semibold text-orange-600 text-right">TT Inc.</th>
+  1394→                            <th className="px-3 py-2 font-semibold text-orange-600 text-right">TT Sal.</th>
+  1395→                            <th className="px-3 py-2 font-semibold text-orange-600 text-right">TT Tiempo</th>
+  1396→                            <th className="px-3 py-2 font-semibold text-blue-600 text-right">TN Inc.</th>
+  1397→                            <th className="px-3 py-2 font-semibold text-blue-600 text-right">TN Sal.</th>
+  1398→                            <th className="px-3 py-2 font-semibold text-blue-600 text-right">TN Tiempo</th>
+  1399→                          </tr>
+  1400→                        </thead>
+  1401→                        <tbody className="divide-y divide-gray-100">
+  1402→                          {indicadores.map((ind, idx) => {
+  1403→                            const prev = idx < indicadores.length - 1 ? indicadores[idx + 1] : null;
+  1404→                            const incDiff = prev ? ind.totalConIncidencia - prev.totalConIncidencia : 0;
+  1405→                            const incTrend = incDiff > 0 ? 'text-red-600' : incDiff < 0 ? 'text-emerald-600' : 'text-gray-400';
+  1406→                            const incArrow = incDiff > 0 ? '+' : '';
+  1407→                            const pct = ind.totalOperadores > 0 ? ((ind.totalConIncidencia / ind.totalOperadores) * 100).toFixed(1) : '0.0';
+  1408→                            const prevPct = prev && prev.totalOperadores > 0 ? ((prev.totalConIncidencia / prev.totalOperadores) * 100) : null;
+  1409→                            const pctDiff = prevPct !== null ? (parseFloat(pct) - prevPct).toFixed(1) : null;
+  1410→                            const pctTrend = pctDiff !== null ? (parseFloat(pctDiff) > 0 ? 'text-red-500' : parseFloat(pctDiff) < 0 ? 'text-emerald-500' : 'text-gray-400') : 'text-gray-400';
+  1411→                            return (
+  1412→                              <tr key={ind.id} className="hover:bg-emerald-50/30">
+  1413→                                <td className="px-3 py-2 font-medium text-gray-700">{ind.fecha}</td>
+  1414→                                <td className="px-3 py-2 text-right font-mono text-gray-600">{ind.totalOperadores}</td>
+  1415→                                <td className={`px-3 py-2 text-right font-mono font-bold ${incTrend}`}>{ind.totalConIncidencia} {incDiff !== 0 && <span className="text-[9px]">({incArrow}{incDiff})</span>}</td>
+  1416→                                <td className={`px-3 py-2 text-right font-mono font-bold ${pctTrend}`}>{pct}% {pctDiff !== null && pctDiff !== '0.0' && <span className="text-[9px]">({parseFloat(pctDiff) > 0 ? '+' : ''}{pctDiff})</span>}</td>
+  1417→                                <td className="px-3 py-2 text-right font-mono text-gray-600">{ind.totalSalidas}</td>
+  1418→                                <td className="px-3 py-2 text-right font-mono font-bold text-gray-800">{formatHM(ind.totalFueraSegundos)}</td>
+  1419→                                <td className="px-3 py-2 text-right font-mono text-gray-600">{formatHM(ind.promedioFueraSegundos)}</td>
+  1420→                                <td className="px-3 py-2 text-right font-mono text-amber-700">{ind.tmConIncidencia}</td>
+  1421→                                <td className="px-3 py-2 text-right font-mono text-amber-600">{ind.tmSalidas}</td>
+  1422→                                <td className="px-3 py-2 text-right font-mono text-amber-800 font-bold">{formatHM(ind.tmFueraSegundos)}</td>
+  1423→                                <td className="px-3 py-2 text-right font-mono text-orange-700">{ind.ttConIncidencia}</td>
+  1424→                                <td className="px-3 py-2 text-right font-mono text-orange-600">{ind.ttSalidas}</td>
+  1425→                                <td className="px-3 py-2 text-right font-mono text-orange-800 font-bold">{formatHM(ind.ttFueraSegundos)}</td>
+  1426→                                <td className="px-3 py-2 text-right font-mono text-blue-700">{ind.tnConIncidencia}</td>
+  1427→                                <td className="px-3 py-2 text-right font-mono text-blue-600">{ind.tnSalidas}</td>
+  1428→                                <td className="px-3 py-2 text-right font-mono text-blue-800 font-bold">{formatHM(ind.tnFueraSegundos)}</td>
+  1429→                              </tr>
+  1430→                            );
+  1431→                          })}
+  1432→                        </tbody>
+  1433→                      </table>
+  1434→                    </div>
+  1435→                  </div>
+  1436→                )}
+  1437→              </div>
+  1438→            )}
+  1439→            {activeTab === 'sanciones' && (
+  1440→              <SancionesTabContent
+  1441→                sanciones={sanciones}
+  1442→                stats={sancionStats}
+  1443→                onPrint={printSancion}
+  1444→                onDelete={deleteSancion}
+  1445→                openProfile={openProfile}
+  1446→                loading={loading}
+  1447→              />
+  1448→            )}
+  1449→          </>
+  1450→        )}
+  1451→      </main>
+  1452→
+  1453→
+  1454→
+  1455→      {/* Toast notification */}
+  1456→      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+  1457→    </div>
+  1458→  );
+  1459→}
+  1460→
+  1461→
+  1462→
+  1463→/* ═══════════════════════════════════════
+  1464→   EXCESO TAB CONTENT (reusable)
+  1465→   ═══════════════════════════════════════ */
+  1466→
+  1467→const COLOR_MAP: Record<string, { bg: string; border: string; text: string; badge1: string; badge2: string; rowBg: string; hoverBg: string; headerBg: string }> = {
+  1468→  orange: {
+  1469→    bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', badge1: 'bg-orange-500', badge2: 'bg-amber-400',
+  1470→    rowBg: 'bg-orange-50/40', hoverBg: 'hover:bg-orange-50/30', headerBg: 'bg-orange-50',
+  1471→  },
+  1472→  purple: {
+  1473→    bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', badge1: 'bg-purple-500', badge2: 'bg-purple-300',
+  1474→    rowBg: 'bg-purple-50/40', hoverBg: 'hover:bg-purple-50/30', headerBg: 'bg-purple-50',
+  1475→  },
+  1476→  blue: {
+  1477→    bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', badge1: 'bg-blue-500', badge2: 'bg-blue-300',
+  1478→    rowBg: 'bg-blue-50/40', hoverBg: 'hover:bg-blue-50/30', headerBg: 'bg-blue-50',
+  1479→  },
+  1480→};
+  1481→
+  1482→function ExcesoTabContent({ title, description, icon, iconSmall, colorClass, filtered, stats, openProfile, tipo, generateSancion }: {
+  1483→  title: string; description: string; icon: React.ReactNode; iconSmall: React.ReactNode;
+  1484→  colorClass: string; filtered: { codigoEmp: number; nombre: string; empresa: string; totalFueraSegundos: number; dias: Set<string>; eventos: { fecha: string; salida: string; entrada: string; duracion: string; duracionSegundos: number }[] }[];
+  1485→  stats: { totalEventos: number; totalSegundos: number; empleadosUnicos: number };
+  1486→  openProfile: (c: number) => void;
+  1487→  tipo: string;
+  1488→  generateSancion: (c: number, f: string, s: string, e: string, d: string, ds: number, t: string) => void;
+  1489→}) {
+  1490→  const c = COLOR_MAP[colorClass] || COLOR_MAP.orange;
+  1491→  const maxAllEvento = filtered.length > 0
+  1492→    ? [...filtered.flatMap(e => e.eventos)].sort((a, b) => b.duracionSegundos - a.duracionSegundos)[0]
+  1493→    : null;
+  1494→
+  1495→  return (
+  1496→    <div className="space-y-4 pt-1">
+  1497→      {/* Info banner */}
+  1498→      <div className={`${c.bg} border ${c.border} rounded-lg px-4 py-3 flex items-center gap-3`}>
+  1499→        {icon}
+  1500→        <div>
+  1501→          <p className={`text-sm font-semibold ${c.text}`}>{title}</p>
+  1502→          <p className="text-xs opacity-70 mt-0.5">{description}</p>
+  1503→        </div>
+  1504→      </div>
+  1505→
+  1506→      {/* Metric cards */}
+  1507→      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+  1508→        <MetricCard icon={<Users className={`h-5 w-5 ${c.text}`} />} label="Empleados con Exceso" value={String(stats.empleadosUnicos)} accent={`border-l-current ${c.text}`} />
+  1509→        <MetricCard icon={<Clock className="h-5 w-5 text-red-500" />} label="Suma Excesos" value={formatHMS(stats.totalSegundos)} sub={`${stats.totalEventos} eventos`} accent="border-l-red-500" subBg="bg-red-50" />
+  1510→        <MetricCard icon={iconSmall} label="Promedio por Empleado" value={stats.empleadosUnicos > 0 ? formatHMS(Math.round(stats.totalSegundos / stats.empleadosUnicos)) : '0h 0m 0s'} accent={`border-l-amber-500`} />
+  1511→        <MetricCard icon={<AlertTriangle className="h-5 w-5 text-red-600" />} label="Mayor Exceso" value={maxAllEvento?.duracion || '00:00:00'} sub={maxAllEvento ? `${filtered.find(e => e.eventos.includes(maxAllEvento))?.nombre || ''} ${maxAllEvento.fecha}` : ''} accent="border-l-red-600" />
+  1512→      </div>
+  1513→
+  1514→      {/* Detail table */}
+  1515→      {filtered.length > 0 && (
+  1516→        <div>
+  1517→          <div className="flex items-center justify-between mb-3">
+  1518→            <h2 className="text-sm font-bold text-gray-800">{title}</h2>
+  1519→            <span className="text-xs text-gray-400">{stats.totalEventos} registros · {filtered.length} operadores</span>
+  1520→          </div>
+  1521→          <div className="border border-gray-200 rounded-lg overflow-hidden">
+  1522→            <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+  1523→              <table className="w-full text-sm">
+  1524→                <thead className="sticky top-0">
+  1525→                  <tr className="bg-gray-50 text-left">
+  1526→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Fecha</th>
+  1527→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+  1528→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Empresa</th>
+  1529→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Salida</th>
+  1530→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Entrada</th>
+  1531→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right">Duracion</th>
+  1532→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center w-24">Accion</th>
+  1533→                  </tr>
+  1534→                </thead>
+  1535→                <tbody className="divide-y divide-gray-100">
+  1536→                  {filtered.flatMap(emp =>
+  1537→                    emp.eventos.map(ev => ({ ...ev, nombre: emp.nombre, empresa: emp.empresa, codigoEmp: emp.codigoEmp }))
+  1538→                  ).sort((a, b) => b.duracionSegundos - a.duracionSegundos).map((ev, i) => (
+  1539→                    <tr key={i} className={`${c.hoverBg} cursor-pointer`} onClick={() => openProfile(ev.codigoEmp)}>
+  1540→                      <td className="px-3 py-2 text-gray-600 text-xs">{ev.fecha}</td>
+  1541→                      <td className="px-3 py-2"><span className="font-semibold text-gray-800 text-xs">{ev.nombre}</span></td>
+  1542→                      <td className="px-3 py-2 text-gray-500 text-xs">{ev.empresa}</td>
+  1543→                      <td className="px-3 py-2 text-center font-mono text-xs text-red-600 font-medium">{ev.salida}</td>
+  1544→                      <td className="px-3 py-2 text-center font-mono text-xs text-emerald-600 font-medium">{ev.entrada}</td>
+  1545→                      <td className="px-3 py-2 text-right">
+  1546→                        <span className={`font-mono text-xs font-bold ${durTextColor(ev.duracionSegundos)}`}>{ev.duracion}</span>
+  1547→                      </td>
+  1548→                      <td className="px-3 py-2 text-center">
+  1549→                        <button onClick={(e) => { e.stopPropagation(); generateSancion(ev.codigoEmp, ev.fecha, ev.salida, ev.entrada, ev.duracion, ev.duracionSegundos, tipo); }}
+  1550→                          className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 transition-colors"
+  1551→                          title="Registrar Pedido de Explicacion">
+  1552→                          <AlertTriangle className="h-3 w-3" /> Sancionar
+  1553→                        </button>
+  1554→                      </td>
+  1555→                    </tr>
+  1556→                  ))}
+  1557→                </tbody>
+  1558→              </table>
+  1559→            </div>
+  1560→          </div>
+  1561→        </div>
+  1562→      )}
+  1563→    </div>
+  1564→  );
+  1565→}
+  1566→
+  1567→function SancionesTabContent({ sanciones, stats, onPrint, onDelete, openProfile, loading }: {
+  1568→  sanciones: Sancion[];
+  1569→  stats: SancionStat[];
+  1570→  onPrint: (id: string) => void;
+  1571→  onDelete: (id: string) => void;
+  1572→  openProfile: (c: number) => void;
+  1573→  loading: boolean;
+  1574→}) {
+  1575→  const [fechaDesde, setFechaDesde] = useState('');
+  1576→  const [fechaHasta, setFechaHasta] = useState('');
+  1577→  const [filtroNombre, setFiltroNombre] = useState('');
+  1578→  const [verStats, setVerStats] = useState(false);
+  1579→
+  1580→  const sortedStats = useMemo(() =>
+  1581→    [...stats].sort((a, b) => b.totalSanciones - a.totalSanciones || b.ultimaSancion.localeCompare(a.ultimaSancion)),
+  1582→  [stats]);
+  1583→
+  1584→  // Build a quick lookup for sanction count per employee
+  1585→  const countByEmp = useMemo(() => {
+  1586→    const m: Record<number, number> = {};
+  1587→    for (const s of sanciones) m[s.codigoEmp] = (m[s.codigoEmp] || 0) + 1;
+  1588→    return m;
+  1589→  }, [sanciones]);
+  1590→
+  1591→  const filteredSanciones = useMemo(() => {
+  1592→    let result = sanciones;
+  1593→    if (fechaDesde) result = result.filter(s => s.fecha >= fechaDesde);
+  1594→    if (fechaHasta) result = result.filter(s => s.fecha <= fechaHasta);
+  1595→    if (filtroNombre.trim()) {
+  1596→      const q = filtroNombre.toLowerCase().trim();
+  1597→      result = result.filter(s => s.nombre.toLowerCase().includes(q) || String(s.codigoEmp).includes(q));
+  1598→    }
+  1599→    return result;
+  1600→  }, [sanciones, fechaDesde, fechaHasta, filtroNombre]);
+  1601→
+  1602→  const filteredStats = useMemo(() => {
+  1603→    const empCodigos = new Set(filteredSanciones.map(s => s.codigoEmp));
+  1604→    return sortedStats.filter(s => empCodigos.has(s.codigoEmp));
+  1605→  }, [sortedStats, filteredSanciones]);
+  1606→
+  1607→  const tipoColors: Record<string, string> = {
+  1608→    desayuno: 'bg-orange-100 text-orange-700 border-orange-200',
+  1609→    'break-tarde': 'bg-purple-100 text-purple-700 border-purple-200',
+  1610→    'break-noche': 'bg-blue-100 text-blue-700 border-blue-200',
+  1611→  };
+  1612→
+  1613→  const limpiarFiltros = () => { setFechaDesde(''); setFechaHasta(''); setFiltroNombre(''); };
+  1614→
+  1615→  const tieneFiltros = fechaDesde || fechaHasta || filtroNombre.trim();
+  1616→
+  1617→  return (
+  1618→    <div className="space-y-4 pt-1">
+  1619→      {/* Header */}
+  1620→      <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-center gap-3">
+  1621→        <FileText className="h-5 w-5 text-red-500 shrink-0" />
+  1622→        <div>
+  1623→          <p className="text-sm font-semibold text-red-700">Pedidos de Explicacion</p>
+  1624→          <p className="text-xs opacity-70 text-red-600/70">Sanciones registradas por excesos de tiempo fuera de deposito</p>
+  1625→        </div>
+  1626→      </div>
+  1627→
+  1628→      {/* Metric cards */}
+  1629→      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+  1630→        <MetricCard icon={<FileText className="h-5 w-5 text-red-500" />} label="Total Sanciones" value={String(filteredSanciones.length)} accent="border-l-red-500" />
+  1631→        <MetricCard icon={<Users className="h-5 w-5 text-blue-500" />} label="Empleados Sancionados" value={String(filteredStats.length)} accent="border-l-blue-500" />
+  1632→        <MetricCard icon={<AlertTriangle className="h-5 w-5 text-amber-500" />} label="Mayor Sancionado" value={filteredStats[0]?.nombre?.split(' ').slice(0, 2).join(' ') || '\u2014'} sub={filteredStats[0] ? `${filteredStats[0].totalSanciones} sanciones` : ''} accent="border-l-amber-500" />
+  1633→        <MetricCard icon={<Clock className="h-5 w-5 text-purple-500" />} label="Ultima Sancion" value={filteredSanciones[0]?.fecha || '\u2014'} sub={filteredSanciones[0]?.nombre || ''} accent="border-l-purple-500" />
+  1634→      </div>
+  1635→
+  1636→      {/* Filters */}
+  1637→      <div className="bg-white border border-gray-200 rounded-lg p-3">
+  1638→        <div className="flex flex-wrap items-end gap-3">
+  1639→          <div className="flex flex-col gap-1">
+  1640→            <label className="text-[11px] font-medium text-gray-500">Desde</label>
+  1641→            <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
+  1642→              className="border border-gray-200 rounded-md px-2.5 py-1.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400" />
+  1643→          </div>
+  1644→          <div className="flex flex-col gap-1">
+  1645→            <label className="text-[11px] font-medium text-gray-500">Hasta</label>
+  1646→            <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
+  1647→              className="border border-gray-200 rounded-md px-2.5 py-1.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400" />
+  1648→          </div>
+  1649→          <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
+  1650→            <label className="text-[11px] font-medium text-gray-500">Buscar operador</label>
+  1651→            <input type="text" placeholder="Nombre o codigo..." value={filtroNombre} onChange={e => setFiltroNombre(e.target.value)}
+  1652→              className="border border-gray-200 rounded-md px-2.5 py-1.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400" />
+  1653→          </div>
+  1654→          {tieneFiltros && (
+  1655→            <button onClick={limpiarFiltros}
+  1656→              className="text-xs text-red-500 hover:text-red-700 font-medium px-3 py-1.5 rounded-md border border-red-200 hover:bg-red-50 transition-colors">
+  1657→              Limpiar filtros
+  1658→            </button>
+  1659→          )}
+  1660→        </div>
+  1661→      </div>
+  1662→
+  1663→      {/* Toggle: Stats / Detalle */}
+  1664→      <div className="flex items-center gap-2">
+  1665→        <button onClick={() => setVerStats(false)}
+  1666→          className={`text-xs font-medium px-3 py-1.5 rounded-md border transition-colors ${!verStats ? 'bg-blue-50 text-blue-700 border-blue-300' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+  1667→          Detalle de Sanciones
+  1668→        </button>
+  1669→        <button onClick={() => setVerStats(true)}
+  1670→          className={`text-xs font-medium px-3 py-1.5 rounded-md border transition-colors ${verStats ? 'bg-blue-50 text-blue-700 border-blue-300' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+  1671→          Resumen por Empleado
+  1672→        </button>
+  1673→        <span className="text-xs text-gray-400 ml-auto">
+  1674→          {verStats ? `${filteredStats.length} empleados` : `${filteredSanciones.length} registros`}
+  1675→        </span>
+  1676→      </div>
+  1677→
+  1678→      {/* === STATS TABLE === */}
+  1679→      {verStats && (
+  1680→        filteredStats.length === 0 ? (
+  1681→          <div className="text-center py-12 border border-gray-200 rounded-lg">
+  1682→            <FileText className="h-12 w-12 mx-auto text-gray-200 mb-3" />
+  1683→            <p className="text-gray-400 text-sm">{tieneFiltros ? 'No hay resultados para los filtros aplicados' : 'No hay sanciones registradas'}</p>
+  1684→          </div>
+  1685→        ) : (
+  1686→          <div className="border border-gray-200 rounded-lg overflow-hidden">
+  1687→            <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+  1688→              <table className="w-full text-sm">
+  1689→                <thead className="sticky top-0 z-10">
+  1690→                  <tr className="bg-gray-50 text-left">
+  1691→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 w-12">#</th>
+  1692→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+  1693→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-28">Sanciones</th>
+  1694→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-40">Ultima Sancion</th>
+  1695→                  </tr>
+  1696→                </thead>
+  1697→                <tbody className="divide-y divide-gray-100">
+  1698→                  {filteredStats.map((stat, idx) => (
+  1699→                    <tr key={stat.codigoEmp} className="hover:bg-gray-50 transition-colors cursor-pointer"
+  1700→                      onClick={() => { setFiltroNombre(stat.nombre.split(' ').slice(0, 2).join(' ')); setVerStats(false); }}>
+  1701→                      <td className="px-3 py-2.5">
+  1702→                        <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold ${idx < 3 ? 'bg-red-500' : 'bg-gray-300'}`}>{idx + 1}</span>
+  1703→                      </td>
+  1704→                      <td className="px-3 py-2.5">
+  1705→                        <p className="font-semibold text-gray-800 text-sm">{stat.nombre}</p>
+  1706→                        <p className="text-[11px] text-gray-400">{stat.codigoEmp} &middot; {stat.empresa}</p>
+  1707→                      </td>
+  1708→                      <td className="px-3 py-2.5 text-right">
+  1709→                        <span className="inline-flex items-center justify-center bg-red-500 text-white text-xs font-bold rounded-full w-7 h-7">{stat.totalSanciones}</span>
+  1710→                      </td>
+  1711→                      <td className="px-3 py-2.5 text-right text-xs text-gray-500">{stat.ultimaSancion.replace('T', ' ').slice(0, 16)}</td>
+  1712→                    </tr>
+  1713→                  ))}
+  1714→                </tbody>
+  1715→              </table>
+  1716→            </div>
+  1717→          </div>
+  1718→        )
+  1719→      )}
+  1720→
+  1721→      {/* === DETAIL TABLE (unified) === */}
+  1722→      {!verStats && (
+  1723→        filteredSanciones.length === 0 ? (
+  1724→          <div className="text-center py-12 border border-gray-200 rounded-lg">
+  1725→            <FileText className="h-12 w-12 mx-auto text-gray-200 mb-3" />
+  1726→            <p className="text-gray-400 text-sm">{tieneFiltros ? 'No hay resultados para los filtros aplicados' : 'No hay sanciones registradas'}</p>
+  1727→            <p className="text-gray-300 text-xs mt-1">Las sanciones se generan desde las pestanas de excesos</p>
+  1728→          </div>
+  1729→        ) : (
+  1730→          <div className="border border-gray-200 rounded-lg overflow-hidden">
+  1731→            <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+  1732→              <table className="w-full text-sm">
+  1733→                <thead className="sticky top-0 z-10">
+  1734→                  <tr className="bg-gray-50 text-left">
+  1735→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Fecha Hecho</th>
+  1736→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Operador</th>
+  1737→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Empresa</th>
+  1738→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">Tipo</th>
+  1739→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Salida</th>
+  1740→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center">Entrada</th>
+  1741→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right">Duracion</th>
+  1742→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-right w-20">Sanc.</th>
+  1743→                    <th className="px-3 py-2.5 text-xs font-semibold text-gray-500 text-center w-32">Acciones</th>
+  1744→                  </tr>
+  1745→                </thead>
+  1746→                <tbody className="divide-y divide-gray-100">
+  1747→                  {filteredSanciones.map((s) => (
+  1748→                    <tr key={s.id} className="hover:bg-gray-50 transition-colors">
+  1749→                      <td className="px-3 py-2 text-gray-600 text-xs">{s.fecha}</td>
+  1750→                      <td className="px-3 py-2">
+  1751→                        <button onClick={() => openProfile(s.codigoEmp)} className="font-semibold text-gray-800 text-xs hover:underline text-left">
+  1752→                          {s.nombre}
+  1753→                        </button>
+  1754→                        <p className="text-[10px] text-gray-400">{s.codigoEmp}</p>
+  1755→                      </td>
+  1756→                      <td className="px-3 py-2 text-xs text-gray-500">{s.empresa}</td>
+  1757→                      <td className="px-3 py-2">
+  1758→                        <span className={`inline-flex items-center text-[10px] font-medium px-2 py-0.5 rounded-full border ${tipoColors[s.tipo] || 'bg-gray-100 text-gray-600 border-gray-200'}`}>
+  1759→                          {s.tipoLabel || s.tipo}
+  1760→                        </span>
+  1761→                      </td>
+  1762→                      <td className="px-3 py-2 text-center font-mono text-xs text-red-600 font-medium">{s.salida}</td>
+  1763→                      <td className="px-3 py-2 text-center font-mono text-xs text-emerald-600 font-medium">{s.entrada}</td>
+  1764→                      <td className="px-3 py-2 text-right">
+  1765→                        <span className={`font-mono text-xs font-bold ${durTextColor(s.duracionSegundos)}`}>{s.duracion}</span>
+  1766→                      </td>
+  1767→                      <td className="px-3 py-2 text-right">
+  1768→                        <span className="inline-flex items-center justify-center bg-red-500 text-white text-[10px] font-bold rounded-full w-6 h-6">
+  1769→                          {countByEmp[s.codigoEmp] || 1}
+  1770→                        </span>
+  1771→                      </td>
+  1772→                      <td className="px-3 py-2 text-center">
+  1773→                        <div className="flex items-center justify-center gap-1">
+  1774→                          <button onClick={() => onPrint(s.id)}
+  1775→                            className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 transition-colors"
+  1776→                            title="Imprimir Pedido de Explicacion">
+  1777→                            <Printer className="h-3 w-3" /> Imprimir
+  1778→                          </button>
+  1779→                          <button onClick={() => { if (confirm('Eliminar esta sancion?')) onDelete(s.id); }}
+  1780→                            className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-1 rounded bg-gray-50 text-gray-500 hover:bg-red-50 hover:text-red-600 border border-gray-200 hover:border-red-200 transition-colors"
+  1781→                            title="Eliminar sancion">
+  1782→                            <Trash2 className="h-3 w-3" />
+  1783→                          </button>
+  1784→                        </div>
+  1785→                      </td>
+  1786→                    </tr>
+  1787→                  ))}
+  1788→                </tbody>
+  1789→              </table>
+  1790→            </div>
+  1791→          </div>
+  1792→        )
+  1793→      )}
+  1794→    </div>
+  1795→  );
+  1796→}
+  1797→
+  1798→/* ═══════════════════════════════════════
+  1799→   SUB-COMPONENTS
+  1800→   ═══════════════════════════════════════ */
+  1801→
+  1802→function MetricCard({ icon, label, value, sub, accent, subBg }: {
+  1803→  icon: React.ReactNode; label: string; value: string;
+  1804→  sub?: string; accent: string; subBg?: string;
+  1805→}) {
+  1806→  return (
+  1807→    <div className={`bg-white border border-gray-200 rounded-lg p-4 border-l-4 ${accent}`}>
+  1808→      <div className="flex items-center justify-between mb-1">
+  1809→        <span className="text-xs text-gray-500 font-medium">{label}</span>
+  1810→        {icon}
+  1811→      </div>
+  1812→      <p className="text-xl font-black text-gray-800">{value}</p>
+  1813→      {sub && (
+  1814→        <p className={`text-[11px] mt-1 ${subBg || ''} px-1.5 py-0.5 rounded inline-block ${subBg ? 'text-gray-500' : 'text-gray-400'}`}>{sub}</p>
+  1815→      )}
+  1816→    </div>
+  1817→  );
+  1818→}
