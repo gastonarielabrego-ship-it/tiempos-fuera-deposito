@@ -4,7 +4,7 @@ import { db } from '@/lib/db';
 async function ensureTable() {
   await db.execute({
     sql: `CREATE TABLE IF NOT EXISTS IndicadorDiario (
-      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8))) || '-' || lower(hex(randomblob(4))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab', abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2)),2)) || '-' || lower(hex(randomblob(12)))),
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8))) || '-' || lower(hex(randomblob(4))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab', abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(12)))),
       fecha TEXT NOT NULL,
       totalOperadores INTEGER NOT NULL DEFAULT 0,
       totalConIncidencia INTEGER NOT NULL DEFAULT 0,
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error saving indicador:', error);
-    return NextResponse.json({ error: 'Error guardando indicador' }, { status: 500 });
+    return NextResponse.json({ error: 'Error guardando indicador', detail: String(error) }, { status: 500 });
   }
 }
 
@@ -117,6 +117,6 @@ export async function GET() {
     return NextResponse.json(indicadores);
   } catch (error) {
     console.error('Error fetching indicadores:', error);
-    return NextResponse.json({ error: 'Error obteniendo indicadores' }, { status: 500 });
+    return NextResponse.json({ error: 'Error obteniendo indicadores', detail: String(error) }, { status: 500 });
   }
 }

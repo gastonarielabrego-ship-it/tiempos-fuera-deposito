@@ -239,12 +239,16 @@ export default function Home() {
 
   /* ── Derived data ── */
 
-  // Filter employees by fechaFilter
-  const filteredEmployees = useMemo(() => {
+  // All employees for general indicator (no empresa exclusion)
+  const allEmployees = useMemo(() => {
     if (!data) return [];
-    const base = fechaFilter ? data.employees.filter(e => e.fecha === fechaFilter) : data.employees;
-    return base.filter(e => !isEmpresaExcluida(e.empresa));
+    return fechaFilter ? data.employees.filter(e => e.fecha === fechaFilter) : data.employees;
   }, [data, fechaFilter]);
+
+  // Filter employees by fechaFilter (excludes empresas for main view)
+  const filteredEmployees = useMemo(() => {
+    return allEmployees.filter(e => !isEmpresaExcluida(e.empresa));
+  }, [allEmployees]);
 
   // Build map: codigoEmp -> primary turno (most frequent turno across all their days)
   const empTurnoMap = useMemo(() => {
@@ -457,10 +461,10 @@ export default function Home() {
   }, [exttData, search]);
 
   const saveIndicadorSnapshot = useCallback(async () => {
-    if (!data || filteredEmployees.length === 0) return;
-    const dates = [...new Set(filteredEmployees.map(e => e.fecha))].sort();
+    if (!data || allEmployees.length === 0) return;
+    const dates = [...new Set(allEmployees.map(e => e.fecha))].sort();
     for (const fecha of dates) {
-      const dayAll = filteredEmployees.filter(e => e.fecha === fecha);
+      const dayAll = allEmployees.filter(e => e.fecha === fecha);
       const dayInc = dayAll.filter(e => e.totalFueraSegundos > 0);
       const uniqueOps = new Set(dayAll.map(e => e.codigoEmp));
       const uniqueInc = new Set(dayInc.map(e => e.codigoEmp));
@@ -486,15 +490,17 @@ export default function Home() {
             sancionados: 0,
           }),
         });
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.error('[indicador] Error saving snapshot for', fecha, err);
+      }
     }
     await fetchIndicadores();
-  }, [data, filteredEmployees, fetchIndicadores]);
+  }, [data, allEmployees, fetchIndicadores]);
 
   // Auto-save general indicator snapshot when data loads
   useEffect(() => {
-    if (filteredEmployees.length > 0) saveIndicadorSnapshot();
-  }, [filteredEmployees, saveIndicadorSnapshot]);
+    if (allEmployees.length > 0) saveIndicadorSnapshot();
+  }, [allEmployees, saveIndicadorSnapshot]);
 
   const [sancionandoExtt, setSancionandoExtt] = useState(false);
   const sancionarTodosExtt = useCallback(async () => {
