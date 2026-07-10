@@ -133,11 +133,12 @@ export async function GET() {
       }));
 
       // Pair Salida Depo -> next Entrada Depo
-      // For TN: exclude shift-change gaps (duration > 6h = not real "time outside")
-      // For TN: also exclude salidas before 23:00 (shift hasn't started)
+      // For TN: only count salidas within shift window 23:00–06:00
+      // Also exclude shift-change gaps (duration > 6h = not real "time outside")
       const isTN = turno === 'TN';
       const TN_MAX_GAP = 6 * 3600; // 6 hours
       const TN_SHIFT_START = 23 * 3600; // 23:00:00
+      const TN_SHIFT_END = 6 * 3600;   // 06:00:00
 
       const tiemposFuera: TimeOutPair[] = [];
       let i = 0;
@@ -146,8 +147,8 @@ export async function GET() {
           const salida = sorted[i];
           const salidaSec = timeToSeconds(String(salida.hora ?? ''));
 
-          // For TN: skip salidas before shift start (23:00)
-          if (isTN && salidaSec < TN_SHIFT_START) {
+          // For TN: only count salidas within the 23:00–06:00 shift window
+          if (isTN && !(salidaSec >= TN_SHIFT_START || salidaSec < TN_SHIFT_END)) {
             i++;
             continue;
           }
