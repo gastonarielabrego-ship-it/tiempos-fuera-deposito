@@ -134,20 +134,30 @@ export async function GET() {
 
       // Pair Salida Depo -> next Entrada Depo
       // For TN: exclude shift-change gaps (duration > 6h = not real "time outside")
+      // For TN: also exclude salidas before 23:00 (shift hasn't started)
       const isTN = turno === 'TN';
       const TN_MAX_GAP = 6 * 3600; // 6 hours
+      const TN_SHIFT_START = 23 * 3600; // 23:00:00
 
       const tiemposFuera: TimeOutPair[] = [];
       let i = 0;
       while (i < sorted.length) {
         if (String(sorted[i].terminal ?? '') === 'Salida Depo') {
           const salida = sorted[i];
+          const salidaSec = timeToSeconds(String(salida.hora ?? ''));
+
+          // For TN: skip salidas before shift start (23:00)
+          if (isTN && salidaSec < TN_SHIFT_START) {
+            i++;
+            continue;
+          }
+
           let entrada: Record<string, unknown> | null = null;
           for (let j = i + 1; j < sorted.length; j++) {
             if (String(sorted[j].terminal ?? '') === 'Entrada Depo') { entrada = sorted[j]; break; }
           }
           if (entrada) {
-            let diff = timeToSeconds(String(entrada.hora ?? '')) - timeToSeconds(String(salida.hora ?? ''));
+            let diff = timeToSeconds(String(entrada.hora ?? '')) - salidaSec;
             if (diff < 0) diff += 86400;
 
             // For TN: skip if gap > 6h (shift change, not real time outside)
