@@ -434,10 +434,11 @@ export default function Home() {
     return results;
   }, [data, fechaFilter]);
 
-  // EXTT summary cards (current data, not filtered)
+  // EXTT summary cards (respects fechaFilter)
   const exttSummary = useMemo(() => {
     if (!data) return null;
-    const allExtt = data.employees.filter(e => e.empresa.toUpperCase().includes('EX-TT') && e.totalFueraSegundos > 1200);
+    const source = fechaFilter ? data.employees.filter(e => e.fecha === fechaFilter) : data.employees;
+    const allExtt = source.filter(e => e.empresa.toUpperCase().includes('EX-TT') && e.totalFueraSegundos > 1200);
     if (allExtt.length === 0) return null;
     const uniqueEmps = new Set(allExtt.map(e => e.codigoEmp));
     const tm = allExtt.filter(e => e.jornada?.toUpperCase().includes('TM'));
@@ -452,7 +453,7 @@ export default function Home() {
       tt: { empleados: new Set(tt.map(e => e.codigoEmp)).size, registros: tt.length, salidas: tt.reduce((s, e) => s + e.tiemposFuera.length, 0), fueraSegundos: tt.reduce((s, e) => s + e.totalFueraSegundos, 0) },
       tn: { empleados: new Set(tn.map(e => e.codigoEmp)).size, registros: tn.length, salidas: tn.reduce((s, e) => s + e.tiemposFuera.length, 0), fueraSegundos: tn.reduce((s, e) => s + e.totalFueraSegundos, 0) },
     };
-  }, [data]);
+  }, [data, fechaFilter]);
 
   const exttFiltered = useMemo(() => {
     if (!search) return exttData;
@@ -1456,8 +1457,8 @@ export default function Home() {
             )}
             {activeTab === 'sanciones' && (
               <SancionesTabContent
-                sanciones={sanciones}
-                stats={sancionStats}
+                sanciones={fechaFilter ? sanciones.filter(s => s.fecha === fechaFilter) : sanciones}
+                stats={fechaFilter ? sancionStats.map(st => ({ ...st, totalSanciones: sanciones.filter(s => s.codigoEmp === st.codigoEmp && s.fecha === fechaFilter).length })) : sancionStats}
                 onPrint={printSancion}
                 onDelete={deleteSancion}
                 openProfile={openProfile}
