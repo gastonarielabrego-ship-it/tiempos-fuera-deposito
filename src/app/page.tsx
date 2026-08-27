@@ -855,6 +855,20 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Hidden file inputs - always rendered so refs work */}
+        <input
+          ref={el => { fileInputsRef.current['/api/upload-accesos'] = el; }}
+          type="file" accept=".xlsx,.xls" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-accesos', 'Accesos', f); e.target.value = ''; }} />
+        <input
+          ref={el => { fileInputsRef.current['/api/upload-comidas'] = el; }}
+          type="file" accept=".xlsx,.xls" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-comidas', 'Comidas', f); e.target.value = ''; }} />
+        <input
+          ref={el => { fileInputsRef.current['/api/upload-facial'] = el; }}
+          type="file" accept=".xlsx,.xls" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-facial', 'Facial', f); e.target.value = ''; }} />
+
         {/* Upload dropdown */}
         {showUpload && (
           <div className="border-t border-gray-100 bg-gray-50 px-4 sm:px-6 py-3">
@@ -876,21 +890,6 @@ export default function Home() {
                   {label}
                 </Button>
               ))}
-              <input
-                key="/api/upload-accesos"
-                ref={el => { fileInputsRef.current['/api/upload-accesos'] = el; }}
-                type="file" accept=".xlsx,.xls" className="hidden"
-                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-accesos', 'Accesos', f); e.target.value = ''; }} />
-              <input
-                key="/api/upload-comidas"
-                ref={el => { fileInputsRef.current['/api/upload-comidas'] = el; }}
-                type="file" accept=".xlsx,.xls" className="hidden"
-                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-comidas', 'Comidas', f); e.target.value = ''; }} />
-              <input
-                key="/api/upload-facial"
-                ref={el => { fileInputsRef.current['/api/upload-facial'] = el; }}
-                type="file" accept=".xlsx,.xls" className="hidden"
-                onChange={e => { const f = e.target.files?.[0]; if (f) upload('/api/upload-facial', 'Facial', f); e.target.value = ''; }} />
               <span className="text-[10px] text-gray-400 ml-2">Se sobreescribe con cada carga</span>
             </div>
           </div>
