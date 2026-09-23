@@ -82,7 +82,7 @@ export async function printSancionById(
 
     // Build incidence description
     const incidenceDesc = isMultiple
-      ? `El colaborador ${sancion.nombre} (Legajo ${sancion.codigoEmp}), empleado de ${sancion.empresa}, sector ${sancion.sector}, registro multiples salidas del deposito sin justificacion, acumulando un tiempo total fuera de deposito de <b>${totalAccStr}</b> en ${pairRows.length} salida${pairRows.length > 1 ? 's' : ''}. ${exitsByDayStr ? 'Distribucion por dia: ' + exitsByDayStr + '.' : ''} Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).`
+      ? `El colaborador ${sancion.nombre} (Legajo ${sancion.codigoEmp}), empleado de ${sancion.empresa}, sector ${sancion.sector}, registro ${pairRows.length === 1 ? 'una salida' : 'multiples salidas'} del deposito sin justificacion, acumulando un tiempo total fuera de deposito de <b>${totalAccStr}</b> en ${pairRows.length} salida${pairRows.length > 1 ? 's' : ''}. ${exitsByDayStr ? 'Distribucion por dia: ' + exitsByDayStr + '.' : ''} Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).`
       : `El colaborador ${sancion.nombre} (Legajo ${sancion.codigoEmp}), empleado de ${sancion.empresa}, sector ${sancion.sector}, registro una salida del deposito a las ${sancion.salida} hs y un reingreso a las ${sancion.entrada} hs del dia ${sancion.fecha}, generando un tiempo fuera de deposito de ${sancion.duracion}, superando el tiempo maximo permitido para el periodo correspondiente. Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).`;
 
     // Build incidence detail section

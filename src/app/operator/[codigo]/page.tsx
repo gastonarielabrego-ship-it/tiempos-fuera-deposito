@@ -234,6 +234,7 @@ export default function OperatorPage() {
 
   /* ── Sancionar + imprimir (como el boton del ranking "Mayor Cantidad de Salidas") ── */
   const [sancionando, setSancionando] = useState(false);
+  const [sancionandoDia, setSancionandoDia] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => setToast({ message, type }), []);
 
@@ -283,6 +284,46 @@ export default function OperatorPage() {
       setSancionando(false);
     }
   }, [emp, sancionando, empDays, codigo, rankingEntry, totalFuera, showToast]);
+
+  /* ── Sancionar un dia puntual + imprimir (boton en cada dia cargado) ── */
+  const sancionarDia = useCallback(async (day: EmployeeDay) => {
+    if (sancionandoDia) return;
+    setSancionandoDia(day.fecha);
+    try {
+      const eventos = day.tiemposFuera.map(tf => ({
+        salida: tf.salida, entrada: tf.entrada,
+        duracion: tf.duracion, duracionSegundos: tf.duracionSegundos,
+        fecha: day.fecha,
+      }));
+      const r = await window.fetch('/api/sanciones', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          codigoEmp: day.codigoEmp,
+          fecha: day.fecha,
+          salida: '', entrada: '',
+          duracion: formatColon(day.totalFueraSegundos), duracionSegundos: day.totalFueraSegundos,
+          tipo: 'multiple-salidas', tipoLabel: 'MAYOR CANTIDAD DE SALIDAS',
+          nombre: day.nombre, empresa: day.empresa, sector: day.sector,
+          jornada: day.jornada || '',
+          eventos,
+        }),
+      });
+      if (r.ok) {
+        const json = await r.json().catch(() => ({}));
+        showToast(`Sancion del dia ${day.fecha} registrada — abriendo impresion`, 'success');
+        if (json.id) {
+          await printSancionById(String(json.id), showToast);
+        }
+      } else {
+        const err = await r.json().catch(() => ({}));
+        showToast(err.error || 'Error al registrar sancion del dia', 'error');
+      }
+    } catch {
+      showToast('Error de conexion al registrar sancion', 'error');
+    } finally {
+      setSancionandoDia(null);
+    }
+  }, [sancionandoDia, showToast]);
 
   /* ── Loading ── */
   if (loading) {
@@ -363,8 +404,8 @@ export default function OperatorPage() {
               </span>
               <button
                 onClick={sancionarOperador}
-                disabled={sancionando || totalEventos === 0}
-                title={totalEventos === 0 ? 'Sin salidas fuera de deposito para sancionar' : 'Registrar sancion e imprimir pedido de explicacion'}
+                disabled={sancionando || sancionandoDia !== null || totalEventos === 0}
+                title={totalEventos === 0 ? 'Sin salidas fuera de deposito para sancionar' : 'Registrar sancion con TODOS los dias e imprimir pedido de explicacion'}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <AlertTriangle className="h-3.5 w-3.5" />
@@ -438,12 +479,12 @@ export default function OperatorPage() {
             {filteredDays.map((day) => (
               <div key={day.fecha} className="border border-gray-200 rounded-xl overflow-hidden">
                 {/* Day header */}
-                <div className="bg-gray-50 border-b border-gray-200 px-5 py-3 flex items-center justify-between">
+                <div className="bg-gray-50 border-b border-gray-200 px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
                   <div className="flex items-center gap-3">
                     <h3 className="text-sm font-bold text-gray-700">{day.fecha}</h3>
                     <span className="text-xs text-gray-400">Jornada: {day.jornada || '—'}</span>
                   </div>
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3 flex-wrap">
                     <span className="text-xs text-gray-500">
                       {day.accesosEventos.length} accesos &middot; {day.facialRegistros.length} faciales &middot; {day.comidasHoras.length} comidas
                     </span>
@@ -452,6 +493,15 @@ export default function OperatorPage() {
                         {day.totalFuera} fuera
                       </span>
                     )}
+                    <button
+                      onClick={() => sancionarDia(day)}
+                      disabled={sancionandoDia !== null || day.tiemposFuera.length === 0}
+                      title={day.tiemposFuera.length === 0 ? 'Sin salidas fuera de deposito este dia' : `Registrar sancion e imprimir pedido de explicacion del dia ${day.fecha}`}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                    >
+                      <AlertTriangle className="h-3 w-3" />
+                      {sancionandoDia === day.fecha ? 'Sancionando...' : 'Sancionar'}
+                    </button>
                   </div>
                 </div>
 
