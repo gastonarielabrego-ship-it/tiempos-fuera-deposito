@@ -14,45 +14,32 @@ export async function printSancionById(
     ]);
     if (!sancionR.ok) { notify?.('Error al obtener sancion', 'error'); return; }
     const sancion = await sancionR.json();
-    const movRows: { fecha: string; hora: string; evento: string; tipo: string; duracion: string }[] = movR.ok ? await movR.json() : [];
+    const movRows: { fecha: string; hora: string; evento: string; tipo: string; duracion: string; entradaHora?: string; duracionSegundos?: number }[] = movR.ok ? await movR.json() : [];
 
     const isMultiple = sancion.tipo === 'multiple-salidas';
 
-    // Calculate total accumulated time from movements (salida->entrada pairs)
-    let totalAccSecs = 0;
-    const pairRows: { fecha: string; salida: string; entrada: string; duracion: string; duracionSegs: number }[] = [];
-    const processedEntradas = new Set<number>();
-    for (let i = 0; i < movRows.length; i++) {
-      const m = movRows[i];
-      if (m.tipo === 'Acceso' && m.evento.toLowerCase().includes('salida') && m.duracion) {
-        // Find matching entrada
-        for (let j = i + 1; j < movRows.length; j++) {
-          if (movRows[j].fecha !== m.fecha) break;
-          if (movRows[j].tipo === 'Acceso' && movRows[j].evento.toLowerCase().includes('entrada') && !processedEntradas.has(j)) {
-            const sParts = m.hora.split(':').map(Number);
-            const eParts = movRows[j].hora.split(':').map(Number);
-            const secs = (eParts[0] * 3600 + eParts[1] * 60 + (eParts[2] || 0)) - (sParts[0] * 3600 + sParts[1] * 60 + (sParts[2] || 0));
-            if (secs > 0) {
-              totalAccSecs += secs;
-              pairRows.push({ fecha: m.fecha, salida: m.hora, entrada: movRows[j].hora, duracion: m.duracion, duracionSegs: secs });
-              processedEntradas.add(j);
-            }
-            break;
-          }
-        }
-      }
-    }
+    // Pairs come pre-computed from /movimientos, which applies the SAME pairing
+    // algorithm as the dashboard (each Entrada Depo consumed exactly once,
+    // TN shift window + 6h gap rules). No re-pairing here.
+    const pairRows = movRows
+      .filter(m => m.tipo === 'Acceso' && m.evento.toLowerCase().includes('salida') && !!m.entradaHora)
+      .map(m => ({
+        fecha: m.fecha,
+        salida: m.hora,
+        entrada: m.entradaHora || '',
+        duracion: m.duracion || '00:00:00',
+        duracionSegs: m.duracionSegundos || 0,
+      }));
+    const totalAccSecs = pairRows.reduce((s, p) => s + p.duracionSegs, 0);
     const totalAccH = Math.floor(totalAccSecs / 3600);
     const totalAccM = Math.floor((totalAccSecs % 3600) / 60);
     const totalAccS = totalAccSecs % 60;
     const totalAccStr = `${String(totalAccH).padStart(2, '0')}:${String(totalAccM).padStart(2, '0')}:${String(totalAccS).padStart(2, '0')}`;
 
-    // Count exits per day
+    // Count counted (paired) exits per day
     const exitsByDay: Record<string, number> = {};
-    for (const m of movRows) {
-      if (m.tipo === 'Acceso' && m.evento.toLowerCase().includes('salida')) {
-        exitsByDay[m.fecha] = (exitsByDay[m.fecha] || 0) + 1;
-      }
+    for (const p of pairRows) {
+      exitsByDay[p.fecha] = (exitsByDay[p.fecha] || 0) + 1;
     }
     const exitsByDayStr = Object.entries(exitsByDay)
       .sort(([a], [b]) => a.localeCompare(b))

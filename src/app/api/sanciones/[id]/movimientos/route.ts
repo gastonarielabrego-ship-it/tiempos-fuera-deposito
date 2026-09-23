@@ -125,7 +125,7 @@ export async function GET(
     }
 
     // ── 3. Build unified timeline ──
-    const timeline: { fecha: string; hora: string; evento: string; tipo: string; duracion: string }[] = [];
+    const timeline: { fecha: string; hora: string; evento: string; tipo: string; duracion: string; entradaHora?: string; duracionSegundos?: number }[] = [];
 
     // Add access records
     for (const ar of accessRows) {
@@ -166,22 +166,53 @@ export async function GET(
       return a.hora.localeCompare(b.hora);
     });
 
-    // ── 4. Calculate duration between each Salida Depo and next Entrada Depo ──
+    // ── 4. Calculate duration between each Salida Depo and its Entrada Depo ──
+    // Mirrors /api/dashboard pairing EXACTLY:
+    //   - each Entrada Depo is consumed by exactly ONE Salida Depo (duplicate
+    //     swipes no longer double-count the time outside)
+    //   - TN shifts: only salidas within 23:00-06:00 count, gaps > 6h excluded
+    const jornadaRaw = String(row.jornada ?? '').toUpperCase().trim();
+    let turno = 'OTRO';
+    if (jornadaRaw.includes('TM')) turno = 'TM';
+    else if (jornadaRaw.includes('TT')) turno = 'TT';
+    else if (jornadaRaw.includes('TN')) turno = 'TN';
+    if (turno === 'OTRO') {
+      try {
+        const jRes = await db.execute({
+          sql: 'SELECT jornada FROM AccessRecord WHERE codigoEmp = ? LIMIT 1',
+          args: [codigoEmp],
+        });
+        const jRaw = jRes.rows[0] ? String((jRes.rows[0] as Record<string, unknown>).jornada ?? '').toUpperCase().trim() : '';
+        if (jRaw.includes('TM')) turno = 'TM';
+        else if (jRaw.includes('TT')) turno = 'TT';
+        else if (jRaw.includes('TN')) turno = 'TN';
+      } catch { /* keep OTRO */ }
+    }
+    const isTN = turno === 'TN';
+    const TN_MAX_GAP = 6 * 3600;
+    const TN_SHIFT_START = 23 * 3600;
+    const TN_SHIFT_END = 6 * 3600;
+
+    const usedEntradas = new Set<number>();
     for (let i = 0; i < timeline.length; i++) {
       const mov = timeline[i];
       if (mov.tipo === 'Acceso' && mov.evento.toLowerCase().includes('salida')) {
-        // Find next Entrada on the same date
+        const salidaSecs = timeToSeconds(mov.hora);
+        // TN: skip salidas outside the 23:00-06:00 shift window
+        if (isTN && !(salidaSecs >= TN_SHIFT_START || salidaSecs < TN_SHIFT_END)) continue;
+        // Find next unconsumed Entrada on the same date
         for (let j = i + 1; j < timeline.length; j++) {
           const next = timeline[j];
           if (next.fecha !== mov.fecha) break; // different date, stop
+          if (usedEntradas.has(j)) continue;
           if (next.tipo === 'Acceso' && next.evento.toLowerCase().includes('entrada')) {
-            const salidaSecs = timeToSeconds(mov.hora);
-            const entradaSecs = timeToSeconds(next.hora);
-            const diff = entradaSecs - salidaSecs;
-            if (diff > 0) {
+            const diff = timeToSeconds(next.hora) - salidaSecs;
+            const gapOk = !isTN || diff <= TN_MAX_GAP;
+            if (diff > 0 && gapOk) {
               mov.duracion = secondsToTime(diff);
-              // Also mark the entrada with the same duration for reference
-              next.duracion = secondsToTime(diff);
+              mov.duracionSegundos = diff;
+              mov.entradaHora = next.hora;
+              usedEntradas.add(j);
             }
             break;
           }

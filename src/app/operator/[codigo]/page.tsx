@@ -81,11 +81,15 @@ interface UnifiedEvent {
 function UnifiedMovements({ day }: { day: EmployeeDay }) {
   const events = useMemo(() => {
     const list: UnifiedEvent[] = [];
+    const usedPairs = new Set<number>();
 
     for (const ev of day.accesosEventos) {
       const seg = timeToS(ev.hora);
       if (ev.terminal === 'Entrada Depo') {
-        const paired = day.tiemposFuera.find(t => t.entrada === ev.hora);
+        // Match the first unconsumed pair with this entrada time (duplicate swipes safe)
+        const pairIdx = day.tiemposFuera.findIndex((t, k) => !usedPairs.has(k) && t.entrada === ev.hora);
+        const paired = pairIdx >= 0 ? day.tiemposFuera[pairIdx] : undefined;
+        if (pairIdx >= 0) usedPairs.add(pairIdx);
         list.push({
           hora: ev.hora, seg, tipo: 'entrada', label: 'Entrada Depo',
           duracion: paired?.duracion, duracionSeg: paired?.duracionSegundos,

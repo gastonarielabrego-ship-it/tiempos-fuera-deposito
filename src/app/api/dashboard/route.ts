@@ -132,15 +132,18 @@ export async function GET() {
         terminal: String(r.terminal ?? ''),
       }));
 
-      // Pair Salida Depo -> next Entrada Depo
+      // Pair Salida Depo -> next unconsumed Entrada Depo
       // For TN: only count salidas within shift window 23:00–06:00
       // Also exclude shift-change gaps (duration > 6h = not real "time outside")
+      // FIX: each Entrada Depo can only be consumed by ONE Salida Depo, so duplicate
+      // swipes (consecutive Salida Depo) no longer multiply the time outside.
       const isTN = turno === 'TN';
       const TN_MAX_GAP = 6 * 3600; // 6 hours
       const TN_SHIFT_START = 23 * 3600; // 23:00:00
       const TN_SHIFT_END = 6 * 3600;   // 06:00:00
 
       const tiemposFuera: TimeOutPair[] = [];
+      const usedEntradas = new Set<number>();
       let i = 0;
       while (i < sorted.length) {
         if (String(sorted[i].terminal ?? '') === 'Salida Depo') {
@@ -154,8 +157,10 @@ export async function GET() {
           }
 
           let entrada: Record<string, unknown> | null = null;
+          let entradaIdx = -1;
           for (let j = i + 1; j < sorted.length; j++) {
-            if (String(sorted[j].terminal ?? '') === 'Entrada Depo') { entrada = sorted[j]; break; }
+            if (usedEntradas.has(j)) continue;
+            if (String(sorted[j].terminal ?? '') === 'Entrada Depo') { entrada = sorted[j]; entradaIdx = j; break; }
           }
           if (entrada) {
             let diff = timeToSeconds(String(entrada.hora ?? '')) - salidaSec;
@@ -173,6 +178,7 @@ export async function GET() {
               duracionSegundos: diff,
               duracion: secondsToTime(diff),
             });
+            usedEntradas.add(entradaIdx);
           }
         }
         i++;
