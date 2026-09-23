@@ -4,9 +4,11 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { printSancionById } from '@/lib/print-sancion';
 import {
   ArrowLeft, ArrowUpFromLine, ArrowDownToLine, ScanFace,
   UtensilsCrossed, Clock, Sun, Sunset, Moon, AlertTriangle,
+  CheckCircle2, XCircle,
 } from 'lucide-react';
 
 /* ═══════════════════════════════════════
@@ -52,6 +54,13 @@ const formatHMS = (s: number) => {
 };
 
 const durTextColor = (s: number) => s <= 1800 ? 'text-emerald-600' : s <= 3600 ? 'text-amber-600' : 'text-red-600';
+
+const formatColon = (s: number) => {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+};
 
 const turnoMeta: Record<string, { label: string; icon: typeof Sun; bg: string; text: string; border: string }> = {
   TM: { label: 'Mañana', icon: Sun, bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
@@ -223,6 +232,58 @@ export default function OperatorPage() {
   const totalFacial = empDays.reduce((s, d) => s + d.facialRegistros.length, 0);
   const totalComidas = empDays.reduce((s, d) => s + d.comidasHoras.length, 0);
 
+  /* ── Sancionar + imprimir (como el boton del ranking "Mayor Cantidad de Salidas") ── */
+  const [sancionando, setSancionando] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => setToast({ message, type }), []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const sancionarOperador = useCallback(async () => {
+    if (!emp || sancionando) return;
+    setSancionando(true);
+    try {
+      const eventos = empDays.flatMap(d => d.tiemposFuera.map(tf => ({
+        salida: tf.salida, entrada: tf.entrada,
+        duracion: tf.duracion, duracionSegundos: tf.duracionSegundos,
+        fecha: d.fecha,
+      })));
+      const maxDia = empDays.reduce((mx, d) =>
+        d.totalFueraSegundos > (mx ? mx.totalFueraSegundos : -1) ? d : mx, empDays[0]);
+      const r = await window.fetch('/api/sanciones', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          codigoEmp: codigo,
+          fecha: rankingEntry?.maxDiaFecha || maxDia?.fecha || '',
+          salida: '', entrada: '',
+          duracion: formatColon(totalFuera), duracionSegundos: totalFuera,
+          tipo: 'multiple-salidas', tipoLabel: 'MAYOR CANTIDAD DE SALIDAS',
+          nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector,
+          jornada: emp.jornada || '',
+          eventos,
+        }),
+      });
+      if (r.ok) {
+        const json = await r.json().catch(() => ({}));
+        showToast('Sancion registrada — abriendo impresion', 'success');
+        if (json.id) {
+          await printSancionById(String(json.id), showToast);
+        }
+      } else {
+        const err = await r.json().catch(() => ({}));
+        showToast(err.error || 'Error al registrar sancion', 'error');
+      }
+    } catch {
+      showToast('Error de conexion al registrar sancion', 'error');
+    } finally {
+      setSancionando(false);
+    }
+  }, [emp, sancionando, empDays, codigo, rankingEntry, totalFuera, showToast]);
+
   /* ── Loading ── */
   if (loading) {
     return (
@@ -296,9 +357,20 @@ export default function OperatorPage() {
                 Codigo {emp.codigoEmp} &middot; {emp.empresa} &middot; {emp.sector}
               </p>
             </div>
-            <span className={`inline-flex items-center gap-1.5 text-sm font-bold px-3 py-1.5 rounded-full border self-start ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
-              <TurnoIcon className="h-4 w-4" /> {emp.turno} — {tMeta.label}
-            </span>
+            <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+              <span className={`inline-flex items-center gap-1.5 text-sm font-bold px-3 py-1.5 rounded-full border ${tMeta.bg} ${tMeta.text} ${tMeta.border}`}>
+                <TurnoIcon className="h-4 w-4" /> {emp.turno} — {tMeta.label}
+              </span>
+              <button
+                onClick={sancionarOperador}
+                disabled={sancionando || totalEventos === 0}
+                title={totalEventos === 0 ? 'Sin salidas fuera de deposito para sancionar' : 'Registrar sancion e imprimir pedido de explicacion'}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <AlertTriangle className="h-3.5 w-3.5" />
+                {sancionando ? 'Sancionando...' : 'Sancionar'}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -392,6 +464,15 @@ export default function OperatorPage() {
           </div>
         )}
       </main>
+
+      {/* Toast notification */}
+      {toast && (
+        <div className={`fixed bottom-4 right-4 z-[100] flex items-center gap-2 px-4 py-3 rounded-lg border shadow-lg text-sm font-medium animate-in slide-in-from-bottom-2 ${toast.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+          {toast.type === 'success' ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <XCircle className="h-4 w-4 shrink-0" />}
+          <span>{toast.message}</span>
+          <button onClick={() => setToast(null)} className="ml-2 opacity-50 hover:opacity-100"><XCircle className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
     </div>
   );
 }

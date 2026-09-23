@@ -29,3 +29,4 @@ test
 prompt
 skills/
 .neon
+.env*

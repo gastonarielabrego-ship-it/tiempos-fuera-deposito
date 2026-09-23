@@ -93,13 +93,14 @@ export async function POST(req: NextRequest) {
     const resolvedTipoLabel = tipoLabel || tipoLabels[tipo] || tipo.toUpperCase();
     const eventosJson = eventos ? JSON.stringify(eventos) : '';
 
-    await db.execute({
+    const insertResult = await db.execute({
       sql: `INSERT INTO Sancion (codigoEmp, nombre, empresa, sector, jornada, fecha, salida, entrada, duracion, duracionSegundos, tipo, tipoLabel, eventos)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       args: [codigoEmp, empNombre, empEmpresa, empSector, empJornada, fecha || '', salida || '', entrada || '', duracion || '', duracionSegundos || 0, tipo, resolvedTipoLabel, eventosJson],
     });
 
-    return NextResponse.json({ success: true });
+    const newId = insertResult.rows[0] ? String(insertResult.rows[0].id ?? '') : '';
+    return NextResponse.json({ success: true, id: newId });
   } catch (error) {
     console.error('Error creating sancion:', error);
     return NextResponse.json({ error: 'Error creando sancion', detail: String(error) }, { status: 500 });
