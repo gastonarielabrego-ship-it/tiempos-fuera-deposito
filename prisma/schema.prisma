@@ -3,30 +3,107 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 model AccessRecord {
-  id           String   @id @default(cuid())
-  codigoEmp    Int
-  nombre       String
-  fecha        String
-  hora         String
-  terminal     String
-  jornada      String
-  sector       String
-  empresa      String
-  createdAt    DateTime @default(now())
+  id        String   @id @default(cuid()) @db.Text
+  codigoEmp Int
+  nombre    String   @db.Text
+  dni       String?  @db.Text
+  fecha     String   @db.Text
+  hora      String   @db.Text
+  terminal  String   @db.Text
+  jornada   String   @db.Text
+  sector    String   @db.Text
+  empresa   String   @db.Text
+  createdAt String? @default(dbgenerated("to_char(now(), 'YYYY-MM-DD HH24:MI:SS')")) @db.Text
+
+  @@map("accessrecord")
 }
 
 model AuxRecord {
-  id        String   @id @default(cuid())
-  dni       String
-  nombre    String
-  fecha     String
-  hora      String
-  tipo      String
-  detalle   String
-  createdAt DateTime @default(now())
+  id        String   @id @default(cuid()) @db.Text
+  dni       String   @db.Text
+  nombre    String   @db.Text
+  fecha     String   @db.Text
+  hora      String   @db.Text
+  tipo      String   @db.Text
+  detalle   String   @db.Text
+  createdAt String? @default(dbgenerated("to_char(now(), 'YYYY-MM-DD HH24:MI:SS')")) @db.Text
+
+  @@map("auxrecord")
+}
+
+model Sancion {
+  id               String   @id @default(dbgenerated("gen_random_uuid()::text")) @db.Text
+  codigoEmp        Int
+  nombre           String   @db.Text
+  empresa          String   @db.Text
+  sector           String   @db.Text
+  jornada          String   @db.Text
+  fecha            String   @db.Text
+  salida           String   @db.Text
+  entrada          String   @db.Text
+  duracion         String   @db.Text
+  duracionSegundos Int
+  tipo             String   @db.Text
+  tipoLabel        String   @db.Text
+  eventos          String?  @db.Text
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("sancion")
+}
+
+model IndicadorDiario {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()::text")) @db.Text
+  fecha                String   @unique @db.Text
+  totalOperadores      Int
+  totalConIncidencia   Int
+  totalRegistros       Int
+  totalSalidas         Int
+  totalFueraSegundos   Int
+  promedioFueraSegundos Int
+  tmOperadores         Int
+  tmConIncidencia      Int
+  tmSalidas            Int
+  tmFueraSegundos      Int
+  ttOperadores         Int
+  ttConIncidencia      Int
+  ttSalidas            Int
+  ttFueraSegundos      Int
+  tnOperadores         Int
+  tnConIncidencia      Int
+  tnSalidas            Int
+  tnFueraSegundos      Int
+  sancionados          Int
+  createdAt            DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("indicadordiario")
+}
+
+model ExttIndicador {
+  id               String   @id @default(dbgenerated("gen_random_uuid()::text")) @db.Text
+  fecha            String   @unique @db.Text
+  totalEmpleados   Int
+  totalRegistros   Int
+  totalSalidas     Int
+  totalFueraSegundos Int
+  tmEmpleados      Int
+  tmRegistros      Int
+  tmSalidas        Int
+  tmFueraSegundos  Int
+  ttEmpleados      Int
+  ttRegistros      Int
+  ttSalidas        Int
+  ttFueraSegundos  Int
+  tnEmpleados      Int
+  tnRegistros      Int
+  tnSalidas        Int
+  tnFueraSegundos  Int
+  sancionados      Int
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("exttindicador")
 }

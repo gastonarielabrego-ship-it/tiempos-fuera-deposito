@@ -143,7 +143,7 @@ export async function GET(req: NextRequest) {
 
     const statsResult = await db.execute({
       sql: `SELECT codigoEmp, nombre, empresa, COUNT(*) as totalSanciones, MAX(createdAt) as ultimaSancion
-            FROM Sancion GROUP BY codigoEmp ORDER BY totalSanciones DESC, ultimaSancion DESC`,
+            FROM Sancion GROUP BY codigoEmp, nombre, empresa ORDER BY totalSanciones DESC, ultimaSancion DESC`,
       args: [],
     });
 
