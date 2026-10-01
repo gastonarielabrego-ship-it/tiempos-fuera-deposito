@@ -521,9 +521,16 @@ export default function OperatorPage() {
                   <div className="flex items-center gap-3 flex-wrap">
                     <h3 className="text-sm font-bold text-gray-700">{day.fecha}</h3>
                     <TurnoChip turno={day.turno} />
-                    <span className="text-xs text-gray-500 font-medium" title="Ventana efectiva de la jornada: primera y ultima fichada (calculada; la BD no tiene columna jornada efectiva)">
-                      Jornada efectiva: {jornadaVentana(day)}
-                    </span>
+                    {day.jornada ? (
+                      <span className="text-xs text-gray-500 font-medium max-w-[30rem]" title="Jornada efectiva segun sistema de accesos · Ventana calculada: primera y ultima fichada">
+                        Jornada: {day.jornada}
+                        <span className="text-gray-400"> · {jornadaVentana(day)}</span>
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-500 font-medium" title="Ventana efectiva de la jornada: primera y ultima fichada (calculada)">
+                        Jornada efectiva: {jornadaVentana(day)}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 flex-wrap">
                     <span className="text-xs text-gray-500">
