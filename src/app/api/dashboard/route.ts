@@ -14,8 +14,15 @@ function secondsToTime(totalSec: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+function addDays(fecha: string, n: number): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return fecha;
+  const d = new Date(fecha + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 interface TimeOutPair { salida: string; entrada: string; duracionSegundos: number; duracion: string; }
-interface AccesoEvento { hora: string; terminal: string; }
+interface AccesoEvento { fecha: string; hora: string; terminal: string; }
 interface EmployeeDay {
   codigoEmp: number; nombre: string; fecha: string; jornada: string; sector: string; empresa: string;
   turno: string;
@@ -71,16 +78,31 @@ export async function GET() {
     }
 
     // Build lookup map from AuxRecord by DNI only
-    // Key: dni|fecha  |  Value: { faciales: {hora, zona}[], comidas: string[] }
+    // Key: dni|fechaJornada  |  Value: { faciales: {hora, zona}[], comidas: string[] }
     const auxMap = new Map<string, { faciales: { hora: string; zona: string }[]; comidas: string[] }>();
 
     let totalComidas = 0;
     let totalFacial = 0;
 
+    // Pre-pass: find (employee, fecha) / (dni, fecha) pairs with night presence
+    // (any record at or after 23:00). Used to detect TN jornadas that span
+    // midnight: jornada D starts 23:00 of D and ends ~05:20 of D+1.
+    const nightCodFechas = new Set<string>();
+    const nightDniFechas = new Set<string>();
+    for (const a of accesos) {
+      const h = String(a.hora ?? '').trim();
+      if (!h) continue;
+      if (timeToSeconds(h) >= 23 * 3600) {
+        nightCodFechas.add(`${a.codigoEmp}|${a.fecha}`);
+        const dni = String(a.dni ?? '').trim();
+        if (dni) nightDniFechas.add(`${dni}|${a.fecha}`);
+      }
+    }
+
     for (const r of auxRecords) {
       const dni = String(r.dni ?? '').trim();
       const fecha = String(r.fecha ?? '');
-      const hora = String(r.hora ?? '');
+      const hora = String(r.hora ?? '').trim();
       const tipo = String(r.tipo ?? '');
       const detalle = String(r.detalle ?? '');
 
@@ -88,59 +110,83 @@ export async function GET() {
       if (tipo === 'FACIAL') totalFacial++;
 
       if (!dni) continue;
-      const key = `${dni}|${fecha}`;
+      // TN jornada: early-morning aux (hora < 06:00) belongs to the previous day's jornada
+      let fechaJornada = fecha;
+      if (hora && timeToSeconds(hora) < 6 * 3600 && nightDniFechas.has(`${dni}|${addDays(fecha, -1)}`)) {
+        fechaJornada = addDays(fecha, -1);
+      }
+      const key = `${dni}|${fechaJornada}`;
       if (!auxMap.has(key)) auxMap.set(key, { faciales: [], comidas: [] });
       const entry = auxMap.get(key)!;
       if (tipo === 'FACIAL') entry.faciales.push({ hora, zona: detalle });
       if (tipo === 'COMIDA') entry.comidas.push(hora);
     }
 
-    // Group access records by (codigoEmp, fecha)
+    // Group access records by (codigoEmp, jornada)
+    // TN jornada D = records of D from 06:00 onwards + early-morning records of
+    // D+1 (< 06:00) when the employee was present at night (>= 23:00 on D).
     const grouped = new Map<string, Record<string, unknown>[]>();
     for (const a of accesos) {
-      const key = `${a.codigoEmp}|${a.fecha}`;
+      const h = String(a.hora ?? '').trim();
+      if (!h) continue; // skip records without a valid time
+      const horaSec = timeToSeconds(h);
+      let fechaJornada = String(a.fecha ?? '');
+      if (horaSec < 6 * 3600 && nightCodFechas.has(`${a.codigoEmp}|${addDays(fechaJornada, -1)}`)) {
+        fechaJornada = addDays(fechaJornada, -1);
+      }
+      const key = `${a.codigoEmp}|${fechaJornada}`;
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key)!.push(a);
     }
 
-    // Extract unique dates
+    // Extract unique jornada dates
     const dateSet = new Set<string>();
-    for (const a of accesos) dateSet.add(String(a.fecha));
+    for (const key of grouped.keys()) dateSet.add(key.split('|')[1]);
     const dates = Array.from(dateSet).sort();
 
     // Build employee-day records
     const employees: EmployeeDay[] = [];
 
-    for (const [, records] of grouped) {
+    for (const [groupKey, records] of grouped) {
       if (records.length === 0) continue;
-      const sorted = [...records].sort((a, b) => timeToSeconds(String(a.hora ?? '')) - timeToSeconds(String(b.hora ?? '')));
+      // Sort by real date, then time (TN jornadas span two calendar days)
+      const sorted = [...records].sort((a, b) => {
+        const fc = String(a.fecha ?? '').localeCompare(String(b.fecha ?? ''));
+        if (fc !== 0) return fc;
+        return timeToSeconds(String(a.hora ?? '')) - timeToSeconds(String(b.hora ?? ''));
+      });
       const first = sorted[0];
+      const jornadaFecha = groupKey.split('|')[1] || String(first.fecha ?? '');
 
-      // Determine turno from jornada field (contains TM, TT, TN)
+      // Determine turno: use jornada field when present (contains TM/TT/TN);
+      // otherwise infer TN when the jornada has both night (>= 23:00) and
+      // early-morning (< 06:00) records = shift spanning midnight.
       const jornadaRaw = String(first.jornada ?? '').toUpperCase().trim();
       let turno = 'OTRO';
       if (jornadaRaw.includes('TM')) turno = 'TM';
       else if (jornadaRaw.includes('TT')) turno = 'TT';
       else if (jornadaRaw.includes('TN')) turno = 'TN';
+      const hasNight = sorted.some(r => timeToSeconds(String(r.hora ?? '').trim()) >= 23 * 3600);
+      const hasEarly = sorted.some(r => timeToSeconds(String(r.hora ?? '').trim()) < 6 * 3600);
+      if (turno === 'OTRO' && hasNight && hasEarly) turno = 'TN';
 
-      const dniKey = String(first.dni ?? '').trim() ? `${String(first.dni ?? '').trim()}|${String(first.fecha ?? '')}` : '';
+      const dni = String(first.dni ?? '').trim();
+      const dniKey = dni ? `${dni}|${jornadaFecha}` : '';
       const auxData = (dniKey && auxMap.has(dniKey)) ? auxMap.get(dniKey)! : { faciales: [], comidas: [] };
 
-      // Raw access events for timeline
+      // Raw access events for timeline (fecha real de cada fichada)
       const accesosEventos: AccesoEvento[] = sorted.map(r => ({
+        fecha: String(r.fecha ?? ''),
         hora: String(r.hora ?? ''),
         terminal: String(r.terminal ?? ''),
       }));
 
       // Pair Salida Depo -> next unconsumed Entrada Depo
-      // For TN: only count salidas within shift window 23:00–06:00
-      // Also exclude shift-change gaps (duration > 6h = not real "time outside")
-      // FIX: each Entrada Depo can only be consumed by ONE Salida Depo, so duplicate
+      // Each Entrada Depo can only be consumed by ONE Salida Depo, so duplicate
       // swipes (consecutive Salida Depo) no longer multiply the time outside.
+      // Pairs may span midnight inside a TN jornada (diff < 0 -> +24h).
       const isTN = turno === 'TN';
-      const TN_MAX_GAP = 6 * 3600; // 6 hours
-      const TN_SHIFT_START = 23 * 3600; // 23:00:00
-      const TN_SHIFT_END = 6 * 3600;   // 06:00:00
+      const TN_MAX_GAP = 7 * 3600; // TN jornada spans 23:00-06:00 (7h): bigger gaps are day strays
 
       const tiemposFuera: TimeOutPair[] = [];
       const usedEntradas = new Set<number>();
@@ -148,13 +194,7 @@ export async function GET() {
       while (i < sorted.length) {
         if (String(sorted[i].terminal ?? '') === 'Salida Depo') {
           const salida = sorted[i];
-          const salidaSec = timeToSeconds(String(salida.hora ?? ''));
-
-          // For TN: only count salidas within the 23:00–06:00 shift window
-          if (isTN && !(salidaSec >= TN_SHIFT_START || salidaSec < TN_SHIFT_END)) {
-            i++;
-            continue;
-          }
+          const salidaSec = timeToSeconds(String(salida.hora ?? '').trim());
 
           let entrada: Record<string, unknown> | null = null;
           let entradaIdx = -1;
@@ -163,10 +203,10 @@ export async function GET() {
             if (String(sorted[j].terminal ?? '') === 'Entrada Depo') { entrada = sorted[j]; entradaIdx = j; break; }
           }
           if (entrada) {
-            let diff = timeToSeconds(String(entrada.hora ?? '')) - salidaSec;
+            let diff = timeToSeconds(String(entrada.hora ?? '').trim()) - salidaSec;
             if (diff < 0) diff += 86400;
 
-            // For TN: skip if gap > 6h (shift change, not real time outside)
+            // For TN: skip gaps longer than the shift window (day strays / shift change)
             if (isTN && diff > TN_MAX_GAP) {
               i++;
               continue;
@@ -188,7 +228,7 @@ export async function GET() {
       employees.push({
         codigoEmp: Number(first.codigoEmp ?? 0),
         nombre: String(first.nombre ?? ''),
-        fecha: String(first.fecha ?? ''),
+        fecha: jornadaFecha,
         jornada: String(first.jornada ?? '').trim(),
         sector: String(first.sector ?? ''),
         empresa: String(first.empresa ?? ''),

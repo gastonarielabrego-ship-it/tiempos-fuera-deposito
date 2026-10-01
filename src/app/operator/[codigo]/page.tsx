@@ -16,7 +16,7 @@ import {
    ═══════════════════════════════════════ */
 
 interface TimeOutPair { salida: string; entrada: string; duracionSegundos: number; duracion: string; }
-interface AccesoEvento { hora: string; terminal: string; }
+interface AccesoEvento { fecha: string; hora: string; terminal: string; }
 
 interface EmployeeDay {
   codigoEmp: number; nombre: string; fecha: string; jornada: string; sector: string; empresa: string;
@@ -74,7 +74,7 @@ const DEFAULT_TURNO_META = { label: '—', icon: Clock, bg: 'bg-gray-50', text: 
    ═══════════════════════════════════════ */
 
 interface UnifiedEvent {
-  hora: string; seg: number; tipo: 'entrada' | 'salida' | 'facial' | 'comida' | 'otro';
+  fecha?: string; hora: string; seg: number; tipo: 'entrada' | 'salida' | 'facial' | 'comida' | 'otro';
   label: string; duracion?: string; duracionSeg?: number;
 }
 
@@ -91,13 +91,13 @@ function UnifiedMovements({ day }: { day: EmployeeDay }) {
         const paired = pairIdx >= 0 ? day.tiemposFuera[pairIdx] : undefined;
         if (pairIdx >= 0) usedPairs.add(pairIdx);
         list.push({
-          hora: ev.hora, seg, tipo: 'entrada', label: 'Entrada Depo',
+          fecha: ev.fecha, hora: ev.hora, seg, tipo: 'entrada', label: 'Entrada Depo',
           duracion: paired?.duracion, duracionSeg: paired?.duracionSegundos,
         });
       } else if (ev.terminal === 'Salida Depo') {
-        list.push({ hora: ev.hora, seg, tipo: 'salida', label: 'Salida Depo' });
+        list.push({ fecha: ev.fecha, hora: ev.hora, seg, tipo: 'salida', label: 'Salida Depo' });
       } else {
-        list.push({ hora: ev.hora, seg, tipo: 'otro', label: ev.terminal });
+        list.push({ fecha: ev.fecha, hora: ev.hora, seg, tipo: 'otro', label: ev.terminal });
       }
     }
 
@@ -144,6 +144,11 @@ function UnifiedMovements({ day }: { day: EmployeeDay }) {
                 </td>
                 <td className="px-3 py-2.5 text-center">
                   <span className="font-mono text-sm font-medium text-gray-700">{ev.hora}</span>
+                  {ev.fecha && ev.fecha !== day.fecha && (
+                    <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-bold align-middle" title="Fichada de la madrugada, pertenece a esta jornada">
+                      {ev.fecha.slice(8, 10)}/{ev.fecha.slice(5, 7)}
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2.5">
                   <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${s.bg}`}>

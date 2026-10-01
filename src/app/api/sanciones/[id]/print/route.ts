@@ -3,6 +3,19 @@ import { db } from '@/lib/db';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
+function addDays(fecha: string, n: number): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return fecha;
+  const d = new Date(fecha + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function timeToSec(t: string): number {
+  const p = String(t || '').split(':').map(Number);
+  if (p.length < 2 || isNaN(p[0]) || isNaN(p[1])) return -1;
+  return p[0] * 3600 + p[1] * 60 + (p[2] || 0);
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -30,37 +43,61 @@ export async function GET(
       createdAt: String(row.createdAt ?? ''),
     };
 
-    // Access records for timeline
-    const movResult = sancion.fecha
-      ? await db.execute({
-          sql: 'SELECT hora, terminal FROM AccessRecord WHERE codigoEmp = ? AND fecha = ? ORDER BY hora ASC',
-          args: [String(sancion.codigoEmp), sancion.fecha],
-        })
-      : await db.execute({
-          sql: 'SELECT hora, terminal FROM AccessRecord WHERE codigoEmp = ? ORDER BY fecha ASC, hora ASC LIMIT 50',
-          args: [String(sancion.codigoEmp)],
-        });
-    const movimientos = movResult.rows.map((r: Record<string, unknown>) => ({ hora: String(r.hora ?? ''), terminal: String(r.terminal ?? '') }));
-
-    // Aux records (facial + comida) from unified AuxRecord table - DNI only
+    // Access records for timeline (jornada TN cruza medianoche: incluye madrugada del dia siguiente)
+    let movimientos: { fecha: string; hora: string; terminal: string }[] = [];
+    let auxRegistros: { fecha: string; hora: string; tipo: string; detalle: string }[] = [];
     let dni = '';
-    const accDniResult = await db.execute({
-      sql: 'SELECT dni FROM AccessRecord WHERE codigoEmp = ? AND fecha = ? LIMIT 1',
-      args: [String(sancion.codigoEmp), sancion.fecha],
-    });
-    if (accDniResult.rows.length > 0) {
-      dni = String((accDniResult.rows[0] as Record<string, unknown>).dni ?? '').trim();
-    }
 
-    const auxResult = dni
-      ? await db.execute({
-          sql: 'SELECT hora, tipo, detalle FROM AuxRecord WHERE dni = ? AND fecha = ? ORDER BY hora ASC',
-          args: [dni, sancion.fecha],
-        })
-      : { rows: [] };
-    const auxRegistros = auxResult.rows.map((r: Record<string, unknown>) => ({
-      hora: String(r.hora ?? ''), tipo: String(r.tipo ?? ''), detalle: String(r.detalle ?? ''),
-    }));
+    if (sancion.fecha) {
+      const fetchFechas = [addDays(sancion.fecha, -1), sancion.fecha, addDays(sancion.fecha, 1)];
+      const placeholders = fetchFechas.map(() => '?').join(',');
+      const movResult = await db.execute({
+        sql: `SELECT fecha, hora, terminal, dni FROM AccessRecord WHERE codigoEmp = ? AND fecha IN (${placeholders}) ORDER BY fecha, hora ASC`,
+        args: [String(sancion.codigoEmp), ...fetchFechas],
+      });
+      const rows = movResult.rows as Record<string, unknown>[];
+
+      // fechas con presencia nocturna (>= 23:00) del empleado
+      const nightFechas = new Set<string>();
+      for (const r of rows) {
+        const h = String(r.hora ?? '').trim();
+        if (h && timeToSec(h) >= 23 * 3600) nightFechas.add(String(r.fecha ?? ''));
+      }
+      const jfOf = (fechaReal: string, hora: string): string => {
+        const sec = timeToSec(hora);
+        return sec >= 0 && sec < 6 * 3600 && nightFechas.has(addDays(fechaReal, -1)) ? addDays(fechaReal, -1) : fechaReal;
+      };
+
+      for (const r of rows) {
+        const d = String(r.dni ?? '').trim();
+        if (d) { dni = d; break; }
+      }
+
+      movimientos = rows
+        .map(r => ({ fecha: String(r.fecha ?? ''), hora: String(r.hora ?? '').trim(), terminal: String(r.terminal ?? '') }))
+        .filter(r => r.hora && jfOf(r.fecha, r.hora) === sancion.fecha);
+
+      if (dni) {
+        const auxFechas = [sancion.fecha, addDays(sancion.fecha, 1)];
+        const ph = auxFechas.map(() => '?').join(',');
+        const auxResult = await db.execute({
+          sql: `SELECT fecha, hora, tipo, detalle FROM AuxRecord WHERE dni = ? AND fecha IN (${ph}) ORDER BY fecha, hora ASC`,
+          args: [dni, ...auxFechas],
+        });
+        auxRegistros = (auxResult.rows as Record<string, unknown>[])
+          .map(r => ({ fecha: String(r.fecha ?? ''), hora: String(r.hora ?? '').trim(), tipo: String(r.tipo ?? ''), detalle: String(r.detalle ?? '') }))
+          .filter(r => r.hora && jfOf(r.fecha, r.hora) === sancion.fecha);
+      }
+    } else {
+      // Legacy: sancion sin fecha
+      const movResult = await db.execute({
+        sql: 'SELECT fecha, hora, terminal FROM AccessRecord WHERE codigoEmp = ? ORDER BY fecha ASC, hora ASC LIMIT 50',
+        args: [String(sancion.codigoEmp)],
+      });
+      movimientos = (movResult.rows as Record<string, unknown>[])
+        .map(r => ({ fecha: String(r.fecha ?? ''), hora: String(r.hora ?? '').trim(), terminal: String(r.terminal ?? '') }))
+        .filter(r => r.hora);
+    }
 
     const countResult = await db.execute({ sql: 'SELECT COUNT(*) as total FROM Sancion WHERE codigoEmp = ?', args: [String(sancion.codigoEmp)] });
     const sancionNumber = Number((countResult.rows[0] as Record<string, unknown>)?.total ?? 1);
@@ -172,12 +209,12 @@ async function generateDocx(d: Record<string, unknown>): Promise<Buffer> {
       evidencia = `El colaborador ${d.nombre} (Legajo ${d.codigoEmp}), empleado de ${d.empresa}, sector ${d.sector}, registro una salida del deposito a las ${d.salida} hs y un reingreso a las ${d.entrada} hs del dia ${d.fecha}, generando un tiempo fuera de deposito de ${d.duracion}, superando el tiempo maximo permitido para el periodo correspondiente. Dicho exceso fue detectado mediante el sistema de control de accesos (molinetes).`;
     }
 
-  // Build movements text
+  // Build movements text (con fecha real de cada fichada)
   const allMov = [
-    ...(d.movimientos as { hora: string; terminal: string }[]).map(m => `${m.hora} - ${m.terminal} (Acceso)`),
-    ...(d.auxRegistros as { hora: string; tipo: string; detalle: string }[]).map(a => {
+    ...(d.movimientos as { fecha: string; hora: string; terminal: string }[]).map(m => `${m.fecha} ${m.hora} - ${m.terminal} (Acceso)`),
+    ...(d.auxRegistros as { fecha: string; hora: string; tipo: string; detalle: string }[]).map(a => {
       const tipoLabel = a.tipo === 'FACIAL' ? 'Facial' : 'Comida';
-      return `${a.hora} - ${a.detalle || tipoLabel} (${tipoLabel})`;
+      return `${a.fecha} ${a.hora} - ${a.detalle || tipoLabel} (${tipoLabel})`;
     }),
   ].sort();
 
