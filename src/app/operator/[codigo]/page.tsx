@@ -20,8 +20,10 @@ interface AccesoEvento { fecha: string; hora: string; terminal: string; }
 
 interface EmployeeDay {
   codigoEmp: number; nombre: string; fecha: string; jornada: string; sector: string; empresa: string;
-  turno: string; tiemposFuera: TimeOutPair[]; totalFueraSegundos: number; totalFuera: string;
-  comidasHoras: string[]; facialRegistros: { hora: string; zona: string }[];
+  turno: string;
+  jornadaInicio: string; jornadaFin: string; cruzaMedianoche: boolean;
+  tiemposFuera: TimeOutPair[]; totalFueraSegundos: number; totalFuera: string;
+  comidasRegistros: { fecha: string; hora: string }[]; facialRegistros: { fecha: string; hora: string; zona: string }[];
   accesosEventos: AccesoEvento[];
 }
 
@@ -69,6 +71,29 @@ const turnoMeta: Record<string, { label: string; icon: typeof Sun; bg: string; t
 };
 const DEFAULT_TURNO_META = { label: '—', icon: Clock, bg: 'bg-gray-50', text: 'text-gray-400', border: 'border-gray-200' };
 
+function TurnoChip({ turno }: { turno: string }) {
+  const meta = turnoMeta[turno];
+  if (!meta) return null;
+  const Icon = meta.icon;
+  return (
+    <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border ${meta.bg} ${meta.text} ${meta.border}`}>
+      <Icon className="h-3 w-3" /> {meta.label}
+    </span>
+  );
+}
+
+// Ventana efectiva de la jornada (se calcula: la BD no tiene columna
+// "jornada efectiva"). Primera fichada -> ultima fichada, con (+1) si cruza
+// medianoche. Ordenada de dia 0 a dia +1: la noche primero, la madrugada despues.
+function jornadaVentana(day: EmployeeDay): string {
+  const evs = day.accesosEventos || [];
+  if (evs.length === 0) return '—';
+  const first = evs[0];
+  const last = evs[evs.length - 1];
+  const cruza = (last.fecha || day.fecha) > (first.fecha || day.fecha);
+  return `${(first.hora || '').slice(0, 5)} → ${(last.hora || '').slice(0, 5)}${cruza ? ' (+1)' : ''}`;
+}
+
 /* ═══════════════════════════════════════
    UNIFIED MOVEMENT TABLE
    ═══════════════════════════════════════ */
@@ -102,14 +127,18 @@ function UnifiedMovements({ day }: { day: EmployeeDay }) {
     }
 
     for (const f of day.facialRegistros) {
-      list.push({ hora: f.hora, seg: timeToS(f.hora), tipo: 'facial', label: f.zona || 'Facial' });
+      list.push({ fecha: f.fecha || day.fecha, hora: f.hora, seg: timeToS(f.hora), tipo: 'facial', label: f.zona || 'Facial' });
     }
 
-    for (const h of day.comidasHoras) {
-      list.push({ hora: h, seg: timeToS(h), tipo: 'comida', label: 'TK Comida' });
+    for (const c of day.comidasRegistros) {
+      list.push({ fecha: c.fecha || day.fecha, hora: c.hora, seg: timeToS(c.hora), tipo: 'comida', label: 'TK Comida' });
     }
 
-    return list.sort((a, b) => a.seg - b.seg);
+    // Orden cronologico REAL de la jornada: dia 0 (noche/tarde) primero,
+    // madrugada del dia +1 despues — por fecha real, no por hora del dia.
+    return list.sort((a, b) =>
+      (a.fecha || day.fecha).localeCompare(b.fecha || day.fecha) || a.seg - b.seg
+    );
   }, [day]);
 
   if (events.length === 0) return <p className="text-sm text-gray-300 italic py-4">Sin movimientos registrados</p>;
@@ -239,7 +268,7 @@ export default function OperatorPage() {
   const totalFuera = empDays.reduce((s, d) => s + d.totalFueraSegundos, 0);
   const totalEventos = empDays.reduce((s, d) => s + d.tiemposFuera.length, 0);
   const totalFacial = empDays.reduce((s, d) => s + d.facialRegistros.length, 0);
-  const totalComidas = empDays.reduce((s, d) => s + d.comidasHoras.length, 0);
+  const totalComidas = empDays.reduce((s, d) => s + d.comidasRegistros.length, 0);
 
   /* ── Sancionar + imprimir (como el boton del ranking "Mayor Cantidad de Salidas") ── */
   const [sancionando, setSancionando] = useState(false);
@@ -273,7 +302,7 @@ export default function OperatorPage() {
           duracion: formatColon(totalFuera), duracionSegundos: totalFuera,
           tipo: 'multiple-salidas', tipoLabel: 'MAYOR CANTIDAD DE SALIDAS',
           nombre: emp.nombre, empresa: emp.empresa, sector: emp.sector,
-          jornada: emp.jornada || '',
+          jornada: emp.turno || '',
           eventos,
         }),
       });
@@ -313,7 +342,7 @@ export default function OperatorPage() {
           duracion: formatColon(day.totalFueraSegundos), duracionSegundos: day.totalFueraSegundos,
           tipo: 'multiple-salidas', tipoLabel: 'MAYOR CANTIDAD DE SALIDAS',
           nombre: day.nombre, empresa: day.empresa, sector: day.sector,
-          jornada: day.jornada || '',
+          jornada: day.turno || '',
           eventos,
         }),
       });
@@ -489,13 +518,16 @@ export default function OperatorPage() {
               <div key={day.fecha} className="border border-gray-200 rounded-xl overflow-hidden">
                 {/* Day header */}
                 <div className="bg-gray-50 border-b border-gray-200 px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
                     <h3 className="text-sm font-bold text-gray-700">{day.fecha}</h3>
-                    <span className="text-xs text-gray-400">Jornada: {day.jornada || '—'}</span>
+                    <TurnoChip turno={day.turno} />
+                    <span className="text-xs text-gray-500 font-medium" title="Ventana efectiva de la jornada: primera y ultima fichada (calculada; la BD no tiene columna jornada efectiva)">
+                      Jornada efectiva: {jornadaVentana(day)}
+                    </span>
                   </div>
                   <div className="flex items-center gap-3 flex-wrap">
                     <span className="text-xs text-gray-500">
-                      {day.accesosEventos.length} accesos &middot; {day.facialRegistros.length} faciales &middot; {day.comidasHoras.length} comidas
+                      {day.accesosEventos.length} accesos &middot; {day.facialRegistros.length} faciales &middot; {day.comidasRegistros.length} comidas
                     </span>
                     {day.totalFueraSegundos > 0 && (
                       <span className={`text-sm font-bold font-mono ${durTextColor(day.totalFueraSegundos)}`}>

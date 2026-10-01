@@ -26,8 +26,9 @@ interface AccesoEvento { fecha: string; hora: string; terminal: string; }
 interface EmployeeDay {
   codigoEmp: number; nombre: string; fecha: string; jornada: string; sector: string; empresa: string;
   turno: string;
+  jornadaInicio: string; jornadaFin: string; cruzaMedianoche: boolean;
   tiemposFuera: TimeOutPair[]; totalFueraSegundos: number; totalFuera: string;
-  comidasHoras: string[]; facialRegistros: { hora: string; zona: string }[];
+  comidasRegistros: { fecha: string; hora: string }[]; facialRegistros: { fecha: string; hora: string; zona: string }[];
   accesosEventos: AccesoEvento[];
 }
 interface RankingEntry {
@@ -78,26 +79,62 @@ export async function GET() {
     }
 
     // Build lookup map from AuxRecord by DNI only
-    // Key: dni|fechaJornada  |  Value: { faciales: {hora, zona}[], comidas: string[] }
-    const auxMap = new Map<string, { faciales: { hora: string; zona: string }[]; comidas: string[] }>();
+    // Key: dni|fechaJornada  |  Value: { faciales: {fecha, hora, zona}[], comidas: {fecha, hora}[] }
+    const auxMap = new Map<string, { faciales: { fecha: string; hora: string; zona: string }[]; comidas: { fecha: string; hora: string }[] }>();
 
     let totalComidas = 0;
     let totalFacial = 0;
 
-    // Pre-pass: find (employee, fecha) / (dni, fecha) pairs with night presence
-    // (any record at or after 23:00). Used to detect TN jornadas that span
-    // midnight: jornada D starts 23:00 of D and ends ~05:20 of D+1.
-    const nightCodFechas = new Set<string>();
-    const nightDniFechas = new Set<string>();
+    // Pre-pass: night presence per (employee, calendar fecha). Decides TN
+    // jornadas that span midnight: jornada D = evening/night of D (18:00+)
+    // + early morning of D+1 (< 06:00).
+    // Night presence on D = any record at/after 23:00, OR the last depot
+    // swipe (Entrada/Salida) of D being an Entrada >= 18:00: the worker
+    // entered in the evening and never swiped out, so the night belongs to
+    // jornada D even without a 23:00+ record (covers TN shifts that start
+    // 18:00-23:00, e.g. entra 21:44 y sale 05:22 del dia siguiente).
+    const dayHasNight23 = new Set<string>();
+    const dayLastSwipe = new Map<string, { sec: number; term: string }>();
+    const dniHasNight23 = new Set<string>();
+    const dniLastSwipe = new Map<string, { sec: number; term: string }>();
+
+    const isNightKey = (
+      hasNight: Set<string>,
+      lastSwipe: Map<string, { sec: number; term: string }>,
+      key: string,
+    ): boolean => {
+      if (hasNight.has(key)) return true;
+      const last = lastSwipe.get(key);
+      return !!last && last.term.toLowerCase().includes('entrada') && last.sec >= 18 * 3600;
+    };
+
     for (const a of accesos) {
       const h = String(a.hora ?? '').trim();
       if (!h) continue;
-      if (timeToSeconds(h) >= 23 * 3600) {
-        nightCodFechas.add(`${a.codigoEmp}|${a.fecha}`);
-        const dni = String(a.dni ?? '').trim();
-        if (dni) nightDniFechas.add(`${dni}|${a.fecha}`);
+      const sec = timeToSeconds(h);
+      const fecha = String(a.fecha ?? '');
+      const term = String(a.terminal ?? '').trim();
+      const isSwipe = term.toLowerCase().includes('entrada') || term.toLowerCase().includes('salida');
+      const codKey = `${a.codigoEmp}|${fecha}`;
+      if (sec >= 23 * 3600) dayHasNight23.add(codKey);
+      if (isSwipe) {
+        const cur = dayLastSwipe.get(codKey);
+        if (!cur || sec >= cur.sec) dayLastSwipe.set(codKey, { sec, term });
+      }
+      const dni = String(a.dni ?? '').trim();
+      if (dni) {
+        const dKey = `${dni}|${fecha}`;
+        if (sec >= 23 * 3600) dniHasNight23.add(dKey);
+        if (isSwipe) {
+          const cur = dniLastSwipe.get(dKey);
+          if (!cur || sec >= cur.sec) dniLastSwipe.set(dKey, { sec, term });
+        }
       }
     }
+    const isNightCod = (codigo: unknown, fecha: string) =>
+      isNightKey(dayHasNight23, dayLastSwipe, `${codigo}|${fecha}`);
+    const isNightDni = (dni: string, fecha: string) =>
+      isNightKey(dniHasNight23, dniLastSwipe, `${dni}|${fecha}`);
 
     for (const r of auxRecords) {
       const dni = String(r.dni ?? '').trim();
@@ -112,26 +149,27 @@ export async function GET() {
       if (!dni) continue;
       // TN jornada: early-morning aux (hora < 06:00) belongs to the previous day's jornada
       let fechaJornada = fecha;
-      if (hora && timeToSeconds(hora) < 6 * 3600 && nightDniFechas.has(`${dni}|${addDays(fecha, -1)}`)) {
+      if (hora && timeToSeconds(hora) < 6 * 3600 && isNightDni(dni, addDays(fecha, -1))) {
         fechaJornada = addDays(fecha, -1);
       }
       const key = `${dni}|${fechaJornada}`;
       if (!auxMap.has(key)) auxMap.set(key, { faciales: [], comidas: [] });
       const entry = auxMap.get(key)!;
-      if (tipo === 'FACIAL') entry.faciales.push({ hora, zona: detalle });
-      if (tipo === 'COMIDA') entry.comidas.push(hora);
+      if (tipo === 'FACIAL') entry.faciales.push({ fecha, hora, zona: detalle });
+      if (tipo === 'COMIDA') entry.comidas.push({ fecha, hora });
     }
 
     // Group access records by (codigoEmp, jornada)
     // TN jornada D = records of D from 06:00 onwards + early-morning records of
-    // D+1 (< 06:00) when the employee was present at night (>= 23:00 on D).
+    // D+1 (< 06:00) when the employee had night presence on D (>= 23:00, or
+    // last swipe of D being an Entrada >= 18:00).
     const grouped = new Map<string, Record<string, unknown>[]>();
     for (const a of accesos) {
       const h = String(a.hora ?? '').trim();
       if (!h) continue; // skip records without a valid time
       const horaSec = timeToSeconds(h);
       let fechaJornada = String(a.fecha ?? '');
-      if (horaSec < 6 * 3600 && nightCodFechas.has(`${a.codigoEmp}|${addDays(fechaJornada, -1)}`)) {
+      if (horaSec < 6 * 3600 && isNightCod(a.codigoEmp, addDays(fechaJornada, -1))) {
         fechaJornada = addDays(fechaJornada, -1);
       }
       const key = `${a.codigoEmp}|${fechaJornada}`;
@@ -159,14 +197,14 @@ export async function GET() {
       const jornadaFecha = groupKey.split('|')[1] || String(first.fecha ?? '');
 
       // Determine turno: use jornada field when present (contains TM/TT/TN);
-      // otherwise infer TN when the jornada has both night (>= 23:00) and
-      // early-morning (< 06:00) records = shift spanning midnight.
+      // otherwise infer TN when the shift spans midnight: night presence on
+      // the jornada fecha + early-morning (< 06:00) records of the next day.
       const jornadaRaw = String(first.jornada ?? '').toUpperCase().trim();
       let turno = 'OTRO';
       if (jornadaRaw.includes('TM')) turno = 'TM';
       else if (jornadaRaw.includes('TT')) turno = 'TT';
       else if (jornadaRaw.includes('TN')) turno = 'TN';
-      const hasNight = sorted.some(r => timeToSeconds(String(r.hora ?? '').trim()) >= 23 * 3600);
+      const hasNight = isNightCod(first.codigoEmp, jornadaFecha);
       const hasEarly = sorted.some(r => timeToSeconds(String(r.hora ?? '').trim()) < 6 * 3600);
       if (turno === 'OTRO' && hasNight && hasEarly) turno = 'TN';
 
@@ -225,6 +263,13 @@ export async function GET() {
       }
 
       const totalFueraSegundos = tiemposFuera.reduce((sum, t) => sum + t.duracionSegundos, 0);
+      // Ventana efectiva de la jornada: primera y ultima fichada (se calcula,
+      // la BD no tiene columna "jornada efectiva")
+      const firstEv = sorted[0];
+      const lastEv = sorted[sorted.length - 1];
+      const jInicio = String(firstEv.hora ?? '').trim();
+      const jFin = String(lastEv.hora ?? '').trim();
+      const cruza = String(lastEv.fecha ?? '') > String(firstEv.fecha ?? '');
       employees.push({
         codigoEmp: Number(first.codigoEmp ?? 0),
         nombre: String(first.nombre ?? ''),
@@ -233,8 +278,11 @@ export async function GET() {
         sector: String(first.sector ?? ''),
         empresa: String(first.empresa ?? ''),
         turno,
+        jornadaInicio: jInicio,
+        jornadaFin: jFin,
+        cruzaMedianoche: cruza,
         tiemposFuera, totalFueraSegundos, totalFuera: secondsToTime(totalFueraSegundos),
-        comidasHoras: auxData.comidas, facialRegistros: auxData.faciales, accesosEventos,
+        comidasRegistros: auxData.comidas, facialRegistros: auxData.faciales, accesosEventos,
       });
     }
 

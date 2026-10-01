@@ -101,14 +101,31 @@ export async function GET(
       accessRows = accResult.rows as Record<string, unknown>[];
     }
 
-    // Presencia nocturna (>= 23:00) por empleado/fecha -> detecta jornadas TN
-    const nightCodFechas = new Set<string>();
+    // Presencia nocturna por fecha calendario del legajo. Decide si las
+    // fichadas de madrugada (< 06:00) de un dia pertenecen a la jornada
+    // anterior (jornada TN que cruza medianoche). Noche en F = alguna fichada
+    // >= 23:00 en F, O la ultima fichada Depo (Entrada/Salida) de F es una
+    // Entrada >= 18:00 (entro por la tarde/noche y nunca marco salida ->
+    // trabajo nocturno, cubre turnos que arrancan 18:00-23:00).
+    const dayHasNight23 = new Set<string>();
+    const dayLastSwipe = new Map<string, { sec: number; term: string }>();
     for (const ar of accessRows) {
       const h = String(ar.hora ?? '').trim();
-      if (h && timeToSeconds(h) >= 23 * 3600) {
-        nightCodFechas.add(`${codigoEmp}|${String(ar.fecha ?? '')}`);
+      if (!h) continue;
+      const sec = timeToSeconds(h);
+      const f = String(ar.fecha ?? '');
+      const term = String(ar.terminal ?? '').trim().toLowerCase();
+      if (sec >= 23 * 3600) dayHasNight23.add(f);
+      if (term.includes('entrada') || term.includes('salida')) {
+        const cur = dayLastSwipe.get(f);
+        if (!cur || sec >= cur.sec) dayLastSwipe.set(f, { sec, term });
       }
     }
+    const isNightFecha = (f: string): boolean => {
+      if (dayHasNight23.has(f)) return true;
+      const last = dayLastSwipe.get(f);
+      return !!last && last.term.includes('entrada') && last.sec >= 18 * 3600;
+    };
 
     // Anota cada fichada con su jornada y filtra a las jornadas objetivo
     const annotated = accessRows
@@ -117,7 +134,7 @@ export async function GET(
         if (!h) return null;
         const fechaReal = String(ar.fecha ?? '');
         let jf = fechaReal;
-        if (timeToSeconds(h) < 6 * 3600 && nightCodFechas.has(`${codigoEmp}|${addDays(fechaReal, -1)}`)) {
+        if (timeToSeconds(h) < 6 * 3600 && isNightFecha(addDays(fechaReal, -1))) {
           jf = addDays(fechaReal, -1);
         }
         return { fecha: fechaReal, jornadaFecha: jf, hora: h, terminal: String(ar.terminal ?? '') };
@@ -150,14 +167,28 @@ export async function GET(
         rawAux = auxResult.rows as Record<string, unknown>[];
       }
 
-      const nightDniFechas = new Set<string>();
+      const dniHasNight23 = new Set<string>();
+      const dniLastSwipe = new Map<string, { sec: number; term: string }>();
       for (const ar of accessRows) {
         const h = String(ar.hora ?? '').trim();
         const d = String(ar.dni ?? '').trim();
-        if (h && d && timeToSeconds(h) >= 23 * 3600) {
-          nightDniFechas.add(`${d}|${String(ar.fecha ?? '')}`);
+        if (!h || !d) continue;
+        const sec = timeToSeconds(h);
+        const f = String(ar.fecha ?? '');
+        const term = String(ar.terminal ?? '').trim().toLowerCase();
+        if (sec >= 23 * 3600) dniHasNight23.add(`${d}|${f}`);
+        if (term.includes('entrada') || term.includes('salida')) {
+          const key = `${d}|${f}`;
+          const cur = dniLastSwipe.get(key);
+          if (!cur || sec >= cur.sec) dniLastSwipe.set(key, { sec, term });
         }
       }
+      const isNightDni = (d: string, f: string): boolean => {
+        const key = `${d}|${f}`;
+        if (dniHasNight23.has(key)) return true;
+        const last = dniLastSwipe.get(key);
+        return !!last && last.term.includes('entrada') && last.sec >= 18 * 3600;
+      };
 
       auxAnnotated = rawAux
         .map(ar => {
@@ -165,7 +196,7 @@ export async function GET(
           if (!h) return null;
           const fechaReal = String(ar.fecha ?? '');
           let jf = fechaReal;
-          if (timeToSeconds(h) < 6 * 3600 && nightDniFechas.has(`${dni}|${addDays(fechaReal, -1)}`)) {
+          if (timeToSeconds(h) < 6 * 3600 && isNightDni(dni, addDays(fechaReal, -1))) {
             jf = addDays(fechaReal, -1);
           }
           return { fecha: fechaReal, jornadaFecha: jf, hora: h, tipo: String(ar.tipo ?? ''), detalle: String(ar.detalle ?? '') };
@@ -208,18 +239,16 @@ export async function GET(
       return a.hora.localeCompare(b.hora);
     });
 
-    // ── 4. Inferir jornadas TN (fichadas nocturnas + madrugada) ──
-    const jfStats = new Map<string, { night: boolean; early: boolean }>();
+    // ── 4. Inferir jornadas TN (presencia nocturna + madrugada) ──
+    // Jornada TN = noche en la fecha de la jornada (misma regla que el
+    // dashboard) + fichadas de madrugada (< 06:00) asignadas a esa jornada.
+    const jfEarly = new Set<string>();
     for (const ar of annotated) {
-      const s = jfStats.get(ar.jornadaFecha) || { night: false, early: false };
-      const sec = timeToSeconds(ar.hora);
-      if (sec >= 23 * 3600) s.night = true;
-      if (sec < 6 * 3600) s.early = true;
-      jfStats.set(ar.jornadaFecha, s);
+      if (timeToSeconds(ar.hora) < 6 * 3600) jfEarly.add(ar.jornadaFecha);
     }
     const tnJornadas = new Set<string>();
-    for (const [jf, s] of jfStats) {
-      if (s.night && s.early) tnJornadas.add(jf);
+    for (const jf of jfEarly) {
+      if (isNightFecha(jf)) tnJornadas.add(jf);
     }
 
     // ── 5. Pair Salida Depo -> Entrada Depo (misma jornada, cada entrada se consume una vez) ──

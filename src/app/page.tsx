@@ -19,12 +19,14 @@ import { printSancionById } from '@/lib/print-sancion';
    ═══════════════════════════════════════ */
 
 interface TimeOutPair { salida: string; entrada: string; duracionSegundos: number; duracion: string; }
-interface AccesoEvento { hora: string; terminal: string; }
+interface AccesoEvento { fecha: string; hora: string; terminal: string; }
 
 interface EmployeeDay {
   codigoEmp: number; nombre: string; fecha: string; jornada: string; sector: string; empresa: string;
-  turno: string; tiemposFuera: TimeOutPair[]; totalFueraSegundos: number; totalFuera: string;
-  comidasHoras: string[]; facialRegistros: { hora: string; zona: string }[];
+  turno: string;
+  jornadaInicio: string; jornadaFin: string; cruzaMedianoche: boolean;
+  tiemposFuera: TimeOutPair[]; totalFueraSegundos: number; totalFuera: string;
+  comidasRegistros: { fecha: string; hora: string }[]; facialRegistros: { fecha: string; hora: string; zona: string }[];
   accesosEventos: AccesoEvento[];
 }
 

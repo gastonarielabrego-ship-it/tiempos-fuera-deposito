@@ -19,6 +19,7 @@ interface TimeOutPair {
 }
 
 interface AccesoEvento {
+  fecha: string;
   hora: string;
   terminal: string;
 }
@@ -30,11 +31,15 @@ interface EmployeeDay {
   jornada: string;
   sector: string;
   empresa: string;
+  turno: string;
+  jornadaInicio: string;
+  jornadaFin: string;
+  cruzaMedianoche: boolean;
   tiemposFuera: TimeOutPair[];
   totalFueraSegundos: number;
   totalFuera: string;
-  comidasHoras: string[];
-  facialRegistros: { hora: string; zona: string }[];
+  comidasRegistros: { fecha: string; hora: string }[];
+  facialRegistros: { fecha: string; hora: string; zona: string }[];
   accesosEventos: AccesoEvento[];
 }
 
@@ -59,33 +64,36 @@ function getDurationColor(seconds: number): string {
 }
 
 function TimelineView({ employee }: { employee: EmployeeDay }) {
-  const { accesosEventos, facialRegistros, comidasHoras } = employee;
+  const { accesosEventos, facialRegistros, comidasRegistros } = employee;
 
   // Build all timeline events
   const events = useMemo(() => {
-    const list: { hora: string; segundos: number; tipo: 'acceso-entrada' | 'acceso-salida' | 'facial' | 'comida'; label: string; zona?: string }[] = [];
+    const list: { fecha: string; hora: string; segundos: number; tipo: 'acceso-entrada' | 'acceso-salida' | 'facial' | 'comida'; label: string; zona?: string }[] = [];
 
     for (const ev of accesosEventos) {
       const seg = timeToSeconds(ev.hora);
       if (ev.terminal === 'Entrada Depo') {
-        list.push({ hora: ev.hora, segundos: seg, tipo: 'acceso-entrada', label: 'Entrada Depo' });
+        list.push({ fecha: ev.fecha || employee.fecha, hora: ev.hora, segundos: seg, tipo: 'acceso-entrada', label: 'Entrada Depo' });
       } else if (ev.terminal === 'Salida Depo') {
-        list.push({ hora: ev.hora, segundos: seg, tipo: 'acceso-salida', label: 'Salida Depo' });
+        list.push({ fecha: ev.fecha || employee.fecha, hora: ev.hora, segundos: seg, tipo: 'acceso-salida', label: 'Salida Depo' });
       }
     }
 
     for (const f of facialRegistros) {
       const seg = timeToSeconds(f.hora);
-      list.push({ hora: f.hora, segundos: seg, tipo: 'facial', label: f.zona || 'Facial', zona: f.zona });
+      list.push({ fecha: f.fecha || employee.fecha, hora: f.hora, segundos: seg, tipo: 'facial', label: f.zona || 'Facial', zona: f.zona });
     }
 
-    for (const h of comidasHoras) {
-      const seg = timeToSeconds(h);
-      list.push({ hora: h, segundos: seg, tipo: 'comida', label: 'TK Comida' });
+    for (const c of comidasRegistros) {
+      const seg = timeToSeconds(c.hora);
+      list.push({ fecha: c.fecha || employee.fecha, hora: c.hora, segundos: seg, tipo: 'comida', label: 'TK Comida' });
     }
 
-    return list.sort((a, b) => a.segundos - b.segundos);
-  }, [accesosEventos, facialRegistros, comidasHoras]);
+    // Orden cronologico REAL: fecha primero (la jornada TN cruza medianoche), luego hora
+    return list.sort((a, b) =>
+      a.fecha.localeCompare(b.fecha) || a.segundos - b.segundos
+    );
+  }, [accesosEventos, facialRegistros, comidasRegistros, employee.fecha]);
 
   if (events.length === 0) {
     return <p className="text-sm text-gray-400 italic py-4">Sin eventos para este dia</p>;
@@ -273,6 +281,11 @@ function TimelineView({ employee }: { employee: EmployeeDay }) {
                 className="flex items-center gap-3 px-3 py-1.5 rounded-md bg-gray-50/80 text-sm"
               >
                 <span className="font-mono text-xs text-gray-500 w-16 shrink-0">{ev.hora}</span>
+                {ev.fecha !== employee.fecha && (
+                  <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-bold" title="Fichada de la madrugada, pertenece a esta jornada">
+                    {ev.fecha.slice(8, 10)}/{ev.fecha.slice(5, 7)}
+                  </span>
+                )}
                 <div className={`w-5 h-5 rounded-full ${colors.bg} flex items-center justify-center text-white shrink-0`}>
                   {getIcon(ev.tipo)}
                 </div>
@@ -403,8 +416,12 @@ export default function WorkerProfileDialog({
               {/* Day info */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="bg-gray-50 rounded-lg p-3">
-                  <p className="text-[10px] text-gray-400 uppercase tracking-wider">Jornada</p>
-                  <p className="text-sm font-medium text-gray-700 mt-0.5">{selectedDay.jornada || '—'}</p>
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wider">Jornada efectiva</p>
+                  <p className="text-sm font-medium text-gray-700 mt-0.5">
+                    {selectedDay.accesosEventos.length > 0
+                      ? `${(selectedDay.jornadaInicio || '').slice(0, 5)} → ${(selectedDay.jornadaFin || '').slice(0, 5)}${selectedDay.cruzaMedianoche ? ' (+1)' : ''}`
+                      : '—'}
+                  </p>
                 </div>
                 <div className="bg-gray-50 rounded-lg p-3">
                   <p className="text-[10px] text-gray-400 uppercase tracking-wider">Sector</p>
@@ -468,13 +485,17 @@ export default function WorkerProfileDialog({
               {/* Comidas */}
               <div>
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">TK Comida</p>
-                {selectedDay.comidasHoras.length === 0 ? (
+                {selectedDay.comidasRegistros.length === 0 ? (
                   <p className="text-sm text-gray-400 italic">Sin registros de comida</p>
                 ) : (
                   <div className="flex flex-wrap gap-2">
-                    {selectedDay.comidasHoras.map((h, idx) => (
+                    {selectedDay.comidasRegistros.map((c, idx) => (
                       <Badge key={idx} variant="outline" className="bg-orange-50 text-orange-600 border-orange-200">
-                        <UtensilsCrossed className="h-3 w-3 mr-1" /> {h}
+                        <UtensilsCrossed className="h-3 w-3 mr-1" />
+                        {c.hora}
+                        {c.fecha && c.fecha !== selectedDay.fecha && (
+                          <span className="ml-1 text-[10px] font-bold">({c.fecha.slice(8, 10)}/{c.fecha.slice(5, 7)})</span>
+                        )}
                       </Badge>
                     ))}
                   </div>
