@@ -69,13 +69,24 @@ function TimelineView({ employee }: { employee: EmployeeDay }) {
   // Build all timeline events
   const events = useMemo(() => {
     const list: { fecha: string; hora: string; segundos: number; tipo: 'acceso-entrada' | 'acceso-salida' | 'facial' | 'comida'; label: string; zona?: string }[] = [];
+    // Ultima fichada Depo vista: para marcar swipes duplicados del lector
+    let lastDepo: { tipo: 'entrada' | 'salida'; fecha: string; seg: number } | null = null;
 
     for (const ev of accesosEventos) {
       const seg = timeToSeconds(ev.hora);
       if (ev.terminal === 'Entrada Depo') {
+        lastDepo = { tipo: 'entrada', fecha: ev.fecha || employee.fecha, seg };
         list.push({ fecha: ev.fecha || employee.fecha, hora: ev.hora, segundos: seg, tipo: 'acceso-entrada', label: 'Entrada Depo' });
       } else if (ev.terminal === 'Salida Depo') {
-        list.push({ fecha: ev.fecha || employee.fecha, hora: ev.hora, segundos: seg, tipo: 'acceso-salida', label: 'Salida Depo' });
+        const fechaEv = ev.fecha || employee.fecha;
+        let duplicada = false;
+        if (lastDepo?.tipo === 'salida') {
+          let gap = seg - lastDepo.seg;
+          if (lastDepo.fecha < fechaEv) gap += 86400; // fichada previa anoche (jornada TN)
+          duplicada = gap >= 0 && gap <= 180;
+        }
+        lastDepo = { tipo: 'salida', fecha: fechaEv, seg };
+        list.push({ fecha: fechaEv, hora: ev.hora, segundos: seg, tipo: 'acceso-salida', label: duplicada ? 'Salida Depo (duplicada)' : 'Salida Depo' });
       }
     }
 

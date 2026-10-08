@@ -107,6 +107,9 @@ function UnifiedMovements({ day }: { day: EmployeeDay }) {
   const events = useMemo(() => {
     const list: UnifiedEvent[] = [];
     const usedPairs = new Set<number>();
+    // Ultima fichada Depo vista: para marcar swipes duplicados del lector
+    // (Salidas consecutivas sin Entrada en el medio, en ventana corta)
+    let lastDepo: { tipo: 'entrada' | 'salida'; fecha: string; seg: number } | null = null;
 
     for (const ev of day.accesosEventos) {
       const seg = timeToS(ev.hora);
@@ -115,12 +118,21 @@ function UnifiedMovements({ day }: { day: EmployeeDay }) {
         const pairIdx = day.tiemposFuera.findIndex((t, k) => !usedPairs.has(k) && t.entrada === ev.hora);
         const paired = pairIdx >= 0 ? day.tiemposFuera[pairIdx] : undefined;
         if (pairIdx >= 0) usedPairs.add(pairIdx);
+        lastDepo = { tipo: 'entrada', fecha: ev.fecha || day.fecha, seg };
         list.push({
           fecha: ev.fecha, hora: ev.hora, seg, tipo: 'entrada', label: 'Entrada Depo',
           duracion: paired?.duracion, duracionSeg: paired?.duracionSegundos,
         });
       } else if (ev.terminal === 'Salida Depo') {
-        list.push({ fecha: ev.fecha, hora: ev.hora, seg, tipo: 'salida', label: 'Salida Depo' });
+        const fechaEv = ev.fecha || day.fecha;
+        let duplicada = false;
+        if (lastDepo?.tipo === 'salida') {
+          let gap = seg - lastDepo.seg;
+          if (lastDepo.fecha < fechaEv) gap += 86400; // fichada previa anoche (jornada TN)
+          duplicada = gap >= 0 && gap <= 180;
+        }
+        lastDepo = { tipo: 'salida', fecha: fechaEv, seg };
+        list.push({ fecha: ev.fecha, hora: ev.hora, seg, tipo: 'salida', label: duplicada ? 'Salida Depo (duplicada)' : 'Salida Depo' });
       } else {
         list.push({ fecha: ev.fecha, hora: ev.hora, seg, tipo: 'otro', label: ev.terminal });
       }

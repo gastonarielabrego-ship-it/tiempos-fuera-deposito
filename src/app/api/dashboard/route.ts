@@ -238,11 +238,33 @@ export async function GET() {
       const isTN = turno === 'TN';
       const TN_MAX_GAP = 7 * 3600; // TN jornada spans 23:00-06:00 (7h): bigger gaps are day strays
 
+      // Swipes duplicados del lector: dos o mas "Salida Depo" seguidas (sin una
+      // "Entrada Depo" en el medio) dentro de una ventana corta = multiples
+      // pasadas del molinete en el mismo cruce. La Salida duplicada NO debe
+      // consumir la siguiente Entrada: con el triple swipe 03:11:50/53/55 la
+      // Entrada de las 05:10 se emparejaba con la Salida fantasma de 03:11:53
+      // (1:58:38) en vez de con la Salida real de las 05:06 (00:04:01).
+      const DUPLICATE_SWIPE_WINDOW = 3 * 60; // 3 minutos entre pasadas del mismo cruce
+      const isDuplicateSalida = (idx: number): boolean => {
+        const curFecha = String(sorted[idx].fecha ?? '');
+        const curSec = timeToSeconds(String(sorted[idx].hora ?? '').trim());
+        for (let k = idx - 1; k >= 0; k--) {
+          const term = String(sorted[k].terminal ?? '').trim();
+          if (term !== 'Salida Depo' && term !== 'Entrada Depo') continue; // ignora otros terminales
+          if (term !== 'Salida Depo') return false; // la fichada Depo previa es Entrada: no es duplicado
+          const prevSec = timeToSeconds(String(sorted[k].hora ?? '').trim());
+          let gap = curSec - prevSec;
+          if (String(sorted[k].fecha ?? '') < curFecha) gap += 86400; // fichada previa anoche: par que cruza medianoche
+          return gap >= 0 && gap <= DUPLICATE_SWIPE_WINDOW;
+        }
+        return false;
+      };
+
       const tiemposFuera: TimeOutPair[] = [];
       const usedEntradas = new Set<number>();
       let i = 0;
       while (i < sorted.length) {
-        if (String(sorted[i].terminal ?? '') === 'Salida Depo') {
+        if (String(sorted[i].terminal ?? '') === 'Salida Depo' && !isDuplicateSalida(i)) {
           const salida = sorted[i];
           const salidaSec = timeToSeconds(String(salida.hora ?? '').trim());
 

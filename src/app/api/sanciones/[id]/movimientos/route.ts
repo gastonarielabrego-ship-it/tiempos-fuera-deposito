@@ -261,10 +261,33 @@ export async function GET(
     }
 
     // ── 5. Pair Salida Depo -> Entrada Depo (misma jornada, cada entrada se consume una vez) ──
+    // Swipes duplicados del lector: Salidas Depo consecutivas sin Entrada Depo
+    // en el medio y dentro de una ventana corta = multiples pasadas del molinete.
+    // La Salida duplicada NO debe consumir la siguiente Entrada (misma regla que
+    // el dashboard): si no, la Entrada real de mas tarde se empareja con la
+    // Salida fantasma y aparece un tiempo fuera inflado (ej. 1:58:38).
+    const DUPLICATE_SWIPE_WINDOW = 3 * 60; // 3 minutos entre pasadas del mismo cruce
+    const isDuplicateSalida = (idx: number): boolean => {
+      const cur = timeline[idx];
+      const curSec = timeToSeconds(cur.hora);
+      for (let k = idx - 1; k >= 0; k--) {
+        const prev = timeline[k];
+        if (prev.tipo !== 'Acceso') continue; // ignora comidas/faciales
+        const p = prev.evento.toLowerCase();
+        const prevEsSalida = p.includes('salida');
+        const prevEsEntrada = p.includes('entrada');
+        if (!prevEsSalida && !prevEsEntrada) continue;
+        if (!prevEsSalida) return false; // la fichada Depo previa es Entrada: no es duplicado
+        let gap = curSec - timeToSeconds(prev.hora);
+        if (prev.fecha < cur.fecha) gap += 86400; // fichada previa anoche: par que cruza medianoche
+        return gap >= 0 && gap <= DUPLICATE_SWIPE_WINDOW;
+      }
+      return false;
+    };
     const usedEntradas = new Set<number>();
     for (let i = 0; i < timeline.length; i++) {
       const mov = timeline[i];
-      if (mov.tipo === 'Acceso' && mov.evento.toLowerCase().includes('salida')) {
+      if (mov.tipo === 'Acceso' && mov.evento.toLowerCase().includes('salida') && !isDuplicateSalida(i)) {
         const salidaSecs = timeToSeconds(mov.hora);
         for (let j = i + 1; j < timeline.length; j++) {
           const next = timeline[j];
