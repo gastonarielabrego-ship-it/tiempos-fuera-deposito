@@ -24,6 +24,15 @@ function addDays(fecha: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Corte de madrugada: fichadas anteriores a las 07:00 de un dia pertenecen a
+// la jornada TN anterior (si hubo presencia nocturna). Misma regla que el
+// dashboard: la salida final del turno TN ("despues de las 6") cierra la
+// jornada previa.
+const EARLY_CUTOFF_SEC = 7 * 3600;
+// Ventana TN que NO cuenta como tiempo fuera de deposito: 22:00-23:00.
+const TN_PRE_SHIFT_START = 22 * 3600;
+const TN_PRE_SHIFT_END = 23 * 3600;
+
 interface TimelineRow {
   fecha: string; // fecha real de la fichada (para mostrar)
   jornadaFecha: string; // fecha de la jornada a la que pertenece (TN cruza medianoche)
@@ -134,7 +143,7 @@ export async function GET(
         if (!h) return null;
         const fechaReal = String(ar.fecha ?? '');
         let jf = fechaReal;
-        if (timeToSeconds(h) < 6 * 3600 && isNightFecha(addDays(fechaReal, -1))) {
+        if (timeToSeconds(h) < EARLY_CUTOFF_SEC && isNightFecha(addDays(fechaReal, -1))) {
           jf = addDays(fechaReal, -1);
         }
         return { fecha: fechaReal, jornadaFecha: jf, hora: h, terminal: String(ar.terminal ?? '') };
@@ -196,7 +205,7 @@ export async function GET(
           if (!h) return null;
           const fechaReal = String(ar.fecha ?? '');
           let jf = fechaReal;
-          if (timeToSeconds(h) < 6 * 3600 && isNightDni(dni, addDays(fechaReal, -1))) {
+          if (timeToSeconds(h) < EARLY_CUTOFF_SEC && isNightDni(dni, addDays(fechaReal, -1))) {
             jf = addDays(fechaReal, -1);
           }
           return { fecha: fechaReal, jornadaFecha: jf, hora: h, tipo: String(ar.tipo ?? ''), detalle: String(ar.detalle ?? '') };
@@ -241,10 +250,10 @@ export async function GET(
 
     // ── 4. Inferir jornadas TN (presencia nocturna + madrugada) ──
     // Jornada TN = noche en la fecha de la jornada (misma regla que el
-    // dashboard) + fichadas de madrugada (< 06:00) asignadas a esa jornada.
+    // dashboard) + fichadas de madrugada (< 07:00) asignadas a esa jornada.
     const jfEarly = new Set<string>();
     for (const ar of annotated) {
-      if (timeToSeconds(ar.hora) < 6 * 3600) jfEarly.add(ar.jornadaFecha);
+      if (timeToSeconds(ar.hora) < EARLY_CUTOFF_SEC) jfEarly.add(ar.jornadaFecha);
     }
     const tnJornadas = new Set<string>();
     for (const jf of jfEarly) {
@@ -265,6 +274,13 @@ export async function GET(
             let diff = timeToSeconds(next.hora) - salidaSecs;
             if (diff < 0) diff += 86400; // par que cruza medianoche dentro de la jornada TN
             const gapOk = !tnJornadas.has(mov.jornadaFecha) || diff <= 7 * 3600;
+            // TN: la ventana 22:00-23:00 (previa al inicio del turno) no cuenta
+            // como tiempo fuera de deposito. Se descuenta del par; si el par
+            // queda completamente dentro de la ventana no se cuenta.
+            if (tnJornadas.has(mov.jornadaFecha)) {
+              const overlap = Math.min(salidaSecs + diff, TN_PRE_SHIFT_END) - Math.max(salidaSecs, TN_PRE_SHIFT_START);
+              if (overlap > 0) diff -= overlap;
+            }
             if (diff > 0 && gapOk) {
               mov.duracion = secondsToTime(diff);
               mov.duracionSegundos = diff;

@@ -63,9 +63,11 @@ export async function GET(
         const h = String(r.hora ?? '').trim();
         if (h && timeToSec(h) >= 23 * 3600) nightFechas.add(String(r.fecha ?? ''));
       }
+      // Corte de madrugada 07:00 (misma regla que el dashboard): la salida
+      // final del turno TN ("despues de las 6") pertenece a la jornada previa.
       const jfOf = (fechaReal: string, hora: string): string => {
         const sec = timeToSec(hora);
-        return sec >= 0 && sec < 6 * 3600 && nightFechas.has(addDays(fechaReal, -1)) ? addDays(fechaReal, -1) : fechaReal;
+        return sec >= 0 && sec < 7 * 3600 && nightFechas.has(addDays(fechaReal, -1)) ? addDays(fechaReal, -1) : fechaReal;
       };
 
       for (const r of rows) {

@@ -39,6 +39,16 @@ interface RankingEntry {
 }
 interface TurnoRanking { turno: string; label: string; totalFueraSegundos: number; totalFuera: string; eventosCount: number; empleados: RankingEntry[]; }
 
+// Corte de madrugada: fichadas anteriores a las 07:00 de un dia pertenecen a
+// la jornada TN anterior (si hubo presencia nocturna). Asi la ultima fichada
+// del turno nocturno (la salida "despues de las 6", ej. 06:00:50) cierra la
+// jornada previa en lugar de aparecer como primera fichada del dia en curso.
+const EARLY_CUTOFF_SEC = 7 * 3600;
+// Ventana TN que NO cuenta como tiempo fuera de deposito: todo lo que esta
+// entre las 22:00 y las 23:00 (previo al inicio del turno nocturno).
+const TN_PRE_SHIFT_START = 22 * 3600;
+const TN_PRE_SHIFT_END = 23 * 3600;
+
 export async function GET() {
   try {
     // Try to create AuxRecord table (may fail on some Turso configs - that's OK)
@@ -147,9 +157,9 @@ export async function GET() {
       if (tipo === 'FACIAL') totalFacial++;
 
       if (!dni) continue;
-      // TN jornada: early-morning aux (hora < 06:00) belongs to the previous day's jornada
+      // TN jornada: early-morning aux (hora < 07:00) belongs to the previous day's jornada
       let fechaJornada = fecha;
-      if (hora && timeToSeconds(hora) < 6 * 3600 && isNightDni(dni, addDays(fecha, -1))) {
+      if (hora && timeToSeconds(hora) < EARLY_CUTOFF_SEC && isNightDni(dni, addDays(fecha, -1))) {
         fechaJornada = addDays(fecha, -1);
       }
       const key = `${dni}|${fechaJornada}`;
@@ -160,16 +170,18 @@ export async function GET() {
     }
 
     // Group access records by (codigoEmp, jornada)
-    // TN jornada D = records of D from 06:00 onwards + early-morning records of
-    // D+1 (< 06:00) when the employee had night presence on D (>= 23:00, or
-    // last swipe of D being an Entrada >= 18:00).
+    // TN jornada D = records of D from 07:00 onwards + early-morning records of
+    // D+1 (< 07:00) when the employee had night presence on D (>= 23:00, or
+    // last swipe of D being an Entrada >= 18:00). El corte 07:00 permite que la
+    // salida final del turno TN ("despues de las 6", ej. 06:00:50) cierre la
+    // jornada anterior en vez de aparecer como primera fichada del dia en curso.
     const grouped = new Map<string, Record<string, unknown>[]>();
     for (const a of accesos) {
       const h = String(a.hora ?? '').trim();
       if (!h) continue; // skip records without a valid time
       const horaSec = timeToSeconds(h);
       let fechaJornada = String(a.fecha ?? '');
-      if (horaSec < 6 * 3600 && isNightCod(a.codigoEmp, addDays(fechaJornada, -1))) {
+      if (horaSec < EARLY_CUTOFF_SEC && isNightCod(a.codigoEmp, addDays(fechaJornada, -1))) {
         fechaJornada = addDays(fechaJornada, -1);
       }
       const key = `${a.codigoEmp}|${fechaJornada}`;
@@ -198,14 +210,14 @@ export async function GET() {
 
       // Determine turno: use jornada field when present (contains TM/TT/TN);
       // otherwise infer TN when the shift spans midnight: night presence on
-      // the jornada fecha + early-morning (< 06:00) records of the next day.
+      // the jornada fecha + early-morning (< 07:00) records of the next day.
       const jornadaRaw = String(first.jornada ?? '').toUpperCase().trim();
       let turno = 'OTRO';
       if (jornadaRaw.includes('TM')) turno = 'TM';
       else if (jornadaRaw.includes('TT')) turno = 'TT';
       else if (jornadaRaw.includes('TN')) turno = 'TN';
       const hasNight = isNightCod(first.codigoEmp, jornadaFecha);
-      const hasEarly = sorted.some(r => timeToSeconds(String(r.hora ?? '').trim()) < 6 * 3600);
+      const hasEarly = sorted.some(r => timeToSeconds(String(r.hora ?? '').trim()) < EARLY_CUTOFF_SEC);
       if (turno === 'OTRO' && hasNight && hasEarly) turno = 'TN';
 
       const dni = String(first.dni ?? '').trim();
@@ -248,6 +260,18 @@ export async function GET() {
             if (isTN && diff > TN_MAX_GAP) {
               i++;
               continue;
+            }
+
+            // For TN: todo lo que esta entre las 22:00 y las 23:00 no cuenta como
+            // tiempo fuera de deposito (ventana previa al inicio del turno). Se
+            // descuenta del par; si el par queda completamente dentro de la
+            // ventana, el par no se cuenta.
+            if (isTN) {
+              const overlap = Math.min(salidaSec + diff, TN_PRE_SHIFT_END) - Math.max(salidaSec, TN_PRE_SHIFT_START);
+              if (overlap > 0) {
+                diff -= overlap;
+                if (diff <= 0) { i++; continue; }
+              }
             }
 
             tiemposFuera.push({
